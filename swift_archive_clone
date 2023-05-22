@@ -1,0 +1,90 @@
+#!/bin/sh
+#
+#A few string about this program
+#
+
+
+#################  Basic configuration and info  ############
+declare -rx _SCRIPTNAME=swift_archive_clone                   #Name of this program
+declare -rx _SCRIPTVERSION="1.0"                                     #Version of this file
+declare -rx _SCRIPTAUTHOR="Kirill Atapin"                        #Author of this program
+
+#Specific paramters
+ARCHIVE_URL="http://www.swift.ac.uk/archive/reproc/"
+DOWNLOAD_COMMAND="wget -q --show-progress -nH --no-check-certificate --cut-dirs=2 -r -l0 -c -N -np -R 'index*' -erobots=off --retr-symlinks"
+
+#declare -rx _EVAL_DRY_RUN=1
+
+#Help and in format readable by docopts
+readonly _HELPTEXT=$(cat <<MARKHELP
+ Usage: $_SCRIPTNAME [options] <obsidlist>
+
+ Clone obsid directories from Swift Archive 
+
+ Arguments:
+   <obsidlist>        ASCII file with ObsIDs
+
+ Options:
+   -o DIR, --outdir=DIR		  Outdir [default: swift_archive]
+   -i str, --instruments=str  String of instruments to clone [default: xrt]
+   -h, --help            Show this help
+       --verbose=LEVEL   Verbosity level  [default: 0]
+       --version         Show version info
+   
+MARKHELP
+)
+
+  
+## Load the library
+#_MYBASHLIB="./bashlib.sh"      #This should be defined in .bashrc
+[ -r "$_MYBASHLIB" ] && source "$_MYBASHLIB" || { echo "Error: Can't \
+load the library. Please check \$_MYBASHLIB variable." 1>&2; exit 1; }
+
+######################  Main functionality   ########################
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#main()
+#{
+
+#Check input arguments:
+readonly arg_infile="${ARGS['<obsidlist>']}"
+[[ -f $arg_infile ]] || die "File '$arg_infile' does not exist" 66 1    
+[[ -r $arg_infile ]] || die "File '$arg_infile' is not readable" 66 0
+
+declare -rx arg_outdir="${ARGS['--outdir']}"
+declare -rx arg_instruments="${ARGS['--instruments']}"
+
+printlog   "Start to process ${arg_infile}. Instruments: ${arg_instruments}" 
+instr_arr=(${arg_instruments//,/' '} 'auxil')
+
+mkdir -p "$arg_outdir"
+cd "./$arg_outdir"
+
+linenum=0;
+errnum=0;
+while read obsid
+do
+	[ -z "$obsid" ] && continue;   #Skip zero lines
+    [ ${obsid:0:1} = \# ] && continue;  #Skip commented lines
+    linenum=$((linenum+1));
+    _err_flag=0;
+    
+    printcolor "#${linenum} $obsid"
+    for cur_instr in "${instr_arr[@]}"
+    do
+        command="${DOWNLOAD_COMMAND} ${ARCHIVE_URL}/${obsid}/${cur_instr}/"
+		if eval_and_log "$command" "ObsID=$obsid: "
+		then
+			printcolor "$obsid: $cur_instr - success" "green"
+		else
+			printcolor "$obsid: $cur_instr - error" "red"
+			_err_flag=1
+		fi
+	done
+	errnum=$((errnum+_err_flag))
+done <"${INITIALPWD}/${arg_infile}"
+
+echo "Finished! Errors $errnum/$linenum"
+
+
+#}

@@ -1,0 +1,90 @@
+#!/bin/sh
+
+# Calculates  values  for  a  column  using  an  arithmetic 
+# expression availible in bc
+
+die()
+{
+	echo "Error: $1";
+	exit 1;
+}
+
+#Test input arguments
+if [ $# -gt 2 -o $# == "0" ] 
+then
+	echo "Usage: txtcal [infile] [outfile]"
+	echo "Calculates  values  for  a  column  using  an  arithmetic expression"
+	echo "For refering to column using '$'"
+	exit 1;
+fi;
+
+if ! [ -r "$1" ] 
+then 
+	die "Cannot read $1";
+fi;
+infile="$1";
+
+if [ -n "$2" ] 
+then
+	outfile="$2";
+else
+	outfile="$infile";
+fi;
+
+#Main loop
+while read line
+do
+	if [ -z "$line" ]
+	then 
+		continue;
+	fi;
+	if [ "$line" == "q" ]
+	then
+		exit;
+	fi;
+	nf=`sed -n 1p $infile | awk "{print NF}"`;	#Count of column in infile
+	if [ "${line%%=*}" == "$line" ]				#Without output column print to stdout
+	then
+		field="0"
+	else
+		fieldstr=`echo ${line%%=*} | tr -d ' '`;
+		field=$((`echo $fieldstr |  sed 's/\\$//' `+0));			#Is string a number?
+		if [ $field -eq 0 ]
+		then 
+			echo "Syntax error: Output column can not be '$fieldstr'";
+			continue;
+		fi;
+	fi;
+
+	line=\"`echo "${line##*=}" | sed -r 's/\\$[0-9]/"&"/g'`\";				#Generate appropriate sting for awk | bc
+	cat "$infile" | awk "{print $line}" | bc -l >.$$.tmp1 2>.$$.err;			#Perform calculation
+	if (cat .$$.err | grep "syntax error" >/dev/null )
+	then
+		echo "Syntax error";
+		rm .$$.err;
+		rm .$$.tmp1;
+		continue;
+	fi;
+	rm .$$.err;
+	if [ $field -eq 0 ]
+	then
+		less .$$.tmp1;
+		rm .$$.tmp1;
+		continue
+	fi;
+	awkout=\$`seq -s "\" \"$" $nf`;				#Column list
+	if [ $field -gt $nf ] 						#Reset to next column number
+	then
+		field=$(($nf+1));
+		awkout="$awkout\" \"\$$field";
+	else
+		awkout=`echo $awkout | tr -s "$field" "$(($nf+1))"`;
+	fi;
+	paste "$infile" .$$.tmp1 | awk "{print $awkout}" >.$$.tmp2;
+	cp .$$.tmp2 "$outfile";
+	cat "$outfile";
+	rm .$$.tmp?;
+	echo "Column \$$field modifed";
+	infile=$outfile;
+done;
+

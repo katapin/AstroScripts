@@ -1,0 +1,53 @@
+#!/bin/sh
+
+
+#A few string about this program
+#
+#
+
+die()
+{
+	echo "Error: $1";
+	exit 1;
+}
+
+showhelp()
+{
+	echo "headerclone [infile] [outfile] [source]"
+	echo -e "Program copies 2880 bytes of FITS header from [source] \n\
+to [infile] and saves result as [outfile]." 
+}
+
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#main()
+#{
+
+#Check input arguments
+#Check input arguments
+if [ $# != "3" ] 
+then
+	showhelp
+	exit 1;
+fi;
+
+if ! [ -r "$1" ]
+then
+	die "File $1 is not found";
+fi;
+infile="$1";
+
+if  [ "$1" == "$2" ]
+then 
+	die "[Infile] and [outfile] must not be the same"; 
+fi;
+
+if ! [ -r "$3" ]
+then
+	die "File $1 is not found";
+fi;
+sourcefile="$3";
+outfile="$2";
+
+dd if=./$sourcefile of=./$outfile bs=1 count=2880 2>/dev/null 	#Copy FITS-header to a new file
+cat $infile >>$outfile

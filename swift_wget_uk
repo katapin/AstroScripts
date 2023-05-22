@@ -1,0 +1,131 @@
+#!/bin/sh
+#
+#A few string about this program
+#
+
+
+SCRIPTNAME=swift_wget
+
+die()
+{
+	echo "Error: $1";
+	exit 1;
+}
+
+showhelp()
+{
+	echo "Usage: $SCRIPTNAME 
+Read from stdin list of ObsIDs and download Swift event-files from UK site 
+(so-called locally-processed, reduced with mor recent CalDB)
+ 
+  -h        display this help and exit
+  TODO: wget 'skip flag' as option чтобы не качать еще раз то, что уже скачено
+  TODO: выводить GTI чтобы иметь представление какой из файлов более важный
+"
+}
+
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#main()
+#{
+
+#Check input arguments:
+
+
+#Ckeck each argument
+while getopts "hi:" Option
+do
+    case $Option in
+    h) showhelp; exit 0;;
+    #i) infile="$OPTARG"
+        #;;
+    #*) showhelp; exit 1
+    esac
+done
+
+shift $((OPTIND-1))
+
+flgSKIP="--no-clobber";
+
+logfile=log`date -I`.log
+linenum=0;
+errnum=0;
+while read line 
+do
+    linenum=$((linenum+1));
+    obsid=`echo "$line" | awk '{print $1}'`;
+    year=`echo "$line" | awk '{print $2}'`;
+    month=`echo "$line" | awk '{print $3}'`;
+    url="http://www.swift.ac.uk/archive/reproc/$obsid"
+    #url="http://heasarc.gsfc.nasa.gov/FTP/swift/data/obs/${year}_${month}/$obsid"
+    
+    actevt=""       #Actual EVT-file name
+    attfile=""
+    evt2=sw${obsid}xpcw2po_cl.evt.gz 
+    evt3=sw${obsid}xpcw3po_cl.evt.gz 
+    evt4=sw${obsid}xpcw4po_cl.evt.gz 
+    
+    wget -q --show-progress $flgSKIP "$url/xrt/event/$evt2"
+    res1=$?
+    wget -q --show-progress $flgSKIP "$url/xrt/event/$evt3"
+    res2=$?
+    wget -q --show-progress $flgSKIP "$url/xrt/event/$evt4"
+    res3=$?
+
+    SATRES="fail";
+    XHDRES="fail";
+    
+    if [ $res1 -eq 0 ] || [ $res2 -eq 0 ] || [ $res3 -eq 0 ]
+    then
+        res0=0;
+        [ $res1 -eq 0 ] && actevt="$evt2";
+        [ $res2 -eq 0 ] && actevt="$evt3";
+        [ $res3 -eq 0 ] && actevt="$evt4";
+        
+        #Get houskeeping file
+        xhdfile=sw${obsid}xhd.hk.gz 
+        wget -q --show-progress $flgSKIP "$url/xrt/hk/$xhdfile";
+        res4=$?
+        if [ $res4 -eq 0 ]
+        then
+            XHDRES="success";
+        fi;
+        
+        #Get info about actual att-file
+        ftkeypar $actevt attflag;        #Get header keyword
+        attflag=`pget ftkeypar svalue`   #In string value format 
+        
+        case "$attflag" in
+            100) attfile=sw${obsid}sat.fits.gz ;; 
+            110) attfile=sw${obsid}pat.fits.gz ;;
+            111) attfile=sw${obsid}uat.fits.gz ;;
+              *) printf "%d %s Can't determine attfile\n" $linenum $obsid;
+                 printf "%d %s Can't determine attfile %s\n" $linenum $obsid $url>>$logfile
+                break;; 
+        esac;
+        
+        wget -q --show-progress $flgSKIP "$url/auxil/$attfile";
+        res5=$?
+        if [ $res5 -eq 0 ]
+        then
+            SATRES="success";
+        fi;
+    
+        printf "\033[01m%d %s EVT=success, SAT=%s, HK=%s\033[0m\n" $linenum $obsid $SATRES $XHDRES
+        printf "%d %s EVT=$actevt(success), SAT=$attfile(%s), HK=$xhdfile(%s) %s\n" $linenum $obsid $SATRES $XHDRES $url>>$logfile
+    
+        if [ $((res0 + res4 + res5)) -ne 0 ] 
+        then
+            errnum=$((errnum+1));
+        fi
+    else
+        printf "%d %s EVT-file is not found \n" $linenum $obsid 
+        printf "%d %s EVT-fils $evt2 or $evt3 are not found %s\n" $linenum $obsid $url>>$logfile
+        errnum=$((errnum+1));
+    fi;
+done;
+
+echo "Finished! Errors $errnum/$linenum"
+
+
+#}

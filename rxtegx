@@ -1,0 +1,231 @@
+#!/bin/sh
+
+#Pipe-line RXTE Good Xenon reduction script
+
+die()
+{
+	echo "Error: $1" | tee -a $logfile;
+	rm -f ./.$$_col*
+	exit 1;
+	
+}
+
+showhelp()
+{
+	echo "rxtegx [gti] [detectors] [resolution] [channels]"
+	echo "gti - input GTI-file"
+	echo "detectors - detector selection pattern, for example, 'pcu02'" 
+	echo "resolution - time resolution in seconds"
+	echo "channels - energy channels, for example, 5-49"
+}
+
+searchfiles()	#Search for *.xdf file and its contents
+{
+	if [ -r "$1" ] ; then printf "%-30s [ok]\n" $1; else exit 1; fi;
+	for file in `cat $1`
+	do
+		if [ -r "$file" ] ; then printf "%-30s [ok]\n" $file; else exit 1; fi;
+	done;
+}
+
+#main()
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#{
+	
+
+#Check input arguments
+if [ $# -ne "4" ] 
+then
+	showhelp
+	exit 1;
+fi;
+
+#Check GTI-file
+if [ "x$1" != "x" -a -r "$1" ]
+then 
+	if (fkeyprint "$1[1]" keynam=HDUCLAS1 exact=yes | grep "GTI" >/dev/null)
+	then
+		gti="$1";
+		gtinum="${gti:3:2}";
+	else
+		die "$1 is not valid GTI-file. GTI-extension must be a first extenssion of FITS";
+	fi;
+else
+	die "GTI-file not found";
+fi;
+
+#Check pcu states
+if [  "x${2:0:3}" != "xpcu" -a  "x${2:0:3}" != "xPCU" ]
+then 
+	die "Wrong second argument. Must be, for example, PCU0124 or pcu0124."
+fi;
+pca=( "rest" "rest" "rest" "rest" "rest") 	#Array of pcu states
+for i in `seq 3 $((${#2}-1))`				# ${#2} is length of $2 string 
+do
+	pcui=${2:$i:1}							#Get i-th symbol of pattern
+	if [ $pcui -lt 0 -o $pcui -gt 4 ]
+	then 
+		die "$pcui is not valid PCU number" 
+	fi;
+	pca[$pcui]="used";
+done;
+
+#Check time resolution
+test "x$3" == "x" && die "time binsize is not assigned";
+timebin=$3;
+
+#Check energy channels
+if [ "x$4" == "x" ]
+then
+	chan="INDEF";
+else
+	chan="${4%%-*}-${4##*-}";
+fi;
+
+#Make PCU pattern
+pcupattern="";
+if [ ${pca[0]} == "used" ]; then pcupattern="$pcupattern"0; echo "Event == bxxxxxx0000xxxxxxxxxxxxxx ||" >>./.$$_col_gx; echo "XeSpecPcu0" >>./.$$_col_bkg; fi;
+if [ ${pca[1]} == "used" ]; then pcupattern="$pcupattern"1; echo "Event == bxxxxxx0001xxxxxxxxxxxxxx ||" >>./.$$_col_gx; echo "XeSpecPcu1" >>./.$$_col_bkg; fi;
+if [ ${pca[2]} == "used" ]; then pcupattern="$pcupattern"2; echo "Event == bxxxxxx0010xxxxxxxxxxxxxx ||" >>./.$$_col_gx; echo "XeSpecPcu2" >>./.$$_col_bkg; fi;
+if [ ${pca[3]} == "used" ]; then pcupattern="$pcupattern"3; echo "Event == bxxxxxx0011xxxxxxxxxxxxxx ||" >>./.$$_col_gx; echo "XeSpecPcu3" >>./.$$_col_bkg; fi;
+if [ ${pca[4]} == "used" ]; then pcupattern="$pcupattern"4; echo "Event == bxxxxxx0100xxxxxxxxxxxxxx ||" >>./.$$_col_gx; echo "XeSpecPcu4" >>./.$$_col_bkg; fi;
+sed -i '$s/||//' ./.$$_col_gx  #Убрать || в последней строке 
+mv ./.$$_col_gx col_gx.pcu${pcupattern}_.txt
+mv ./.$$_col_bkg col_bkg.pcu${pcupattern}_.txt
+logfile=log${gtinum}_pcu${pcupattern}.${timebin}s.${chan}ch_.log
+echo "rxtegx $1 $2 $3 $4" >$logfile
+
+echo "";
+echo "Starting Good Xenon pipe-line processing";
+echo ""
+echo "----------------------------------------";
+echo "Using $gti as GTI-file";
+echo "GTI number is $gtinum";
+echo "PCU0 ${pca[0]}";
+echo "PCU1 ${pca[1]}";
+echo "PCU2 ${pca[2]}";
+echo "PCU3 ${pca[3]}";
+echo "PCU4 ${pca[4]}";
+echo "----------------------------------------";
+
+echo ""
+echo "Searching for filtred GXE files...";
+if !(searchfiles "gx_pcu${pcupattern}_.xdf" )
+then
+	echo "Files not found";
+	rm -f GXE_pcu${pcupattern}*;
+	echo "Searching for raw GXE files...";
+	if !(searchfiles "gx.xdf" )
+	then
+		echo "Files not found";
+		rm -f GXE_*;
+		if [ -r "goodxe.xdf" ]
+		then 
+			echo "Creating GXE files..."
+			echo -ne "goodxe.xdf\nGXE\n" | make_se >>$logfile;	#Run make_se
+			ls -1 GXE_gx* | tee gx.xdf
+			echo ""
+		else
+			die "goodxe.xdf not found. Please create it with XDF"
+		fi;
+	fi;
+	echo "Filtering GXE files..."
+	
+	for i in $(seq `cat gx.xdf | wc -l`)
+	do
+		k=$(($i-1))
+		fselect GXE_gx${k} GXE_pcu${pcupattern}_gx${k} @col_gx.pcu${pcupattern}_.txt && printf "%-30s [ok]\n" GXE_pcu${pcupattern}_gx${k} || die "fselect error"; 
+	done;
+fi
+ls -1 GXE_pcu${pcupattern}_gx* >gx_pcu${pcupattern}_.xdf
+fkeyprint `cat goodxe.xdf | sed -n 1p`[1] keynam=DATAMODE | grep DATAMODE= | tee -a $logfile
+
+echo ""
+echo "Searching for Background files...";
+if !(searchfiles "bkg.xdf" )
+then
+	echo "Files not found";
+	test -r "std2.xdf" ||  die "std2.xdf not found. Please create it with XDF";
+	test -r "filter.xdf" ||  die "filter.xdf not found. Please create it with XDF";
+	echo "Creating Background files...";
+	filterfile=`cat filter.xdf`;
+	##### USING ONLY FAINT MODEL #####
+	runpcabackest >>$logfile <<pcabackesinput 
+@std2.xdf
+bkg.xdf
+bkg
+$filterfile
+/home/Kjsdja/work/Xray/.calib/RXTE/pca_bkgd_cmfaintl7_eMv20051128.mdl
+16
+no
+no
+yes
+/home/Kjsdja/work/Xray/.calib/RXTE/pca_saa_history.gz
+no
+no
+pcabackesinput
+	cat bkg.xdf
+fi;
+
+#Create SUM light curve 
+echo "";
+echo "Creating TOTAL light curve...";
+rm -f lc${gtinum}_pcu${pcupattern}.${timebin}s.${chan}ch_.lc
+rm -f lc${gtinum}_pcu${pcupattern}.${timebin}s.${chan}ch_b.lc
+seextrct >>$logfile  <<seextrctinput
+@gx_pcu${pcupattern}_.xdf
+-
+$gti
+lc${gtinum}_pcu${pcupattern}.${timebin}s.${chan}ch_
+TIME
+Event
+$timebin
+LIGHTCURVE
+RATE
+SUM
+INDEF
+INDEF
+INDEF
+INDEF
+INDEF
+$chan
+INDEF
+seextrctinput
+test -s "lc${gtinum}_pcu${pcupattern}.${timebin}s.${chan}ch_.lc" && printf "%-30s [ok]\n" lc${gtinum}_pcu${pcupattern}.${timebin}s.${chan}ch_.lc || die "seextrct error";
+
+#Create BACKGROUND light curve 
+echo "";
+echo "Creating Background light curve...";
+
+rm -f bkg${gtinum}_pcu${pcupattern}.${chan}ch_.lc
+saextrct >>$logfile <<saextrctinput
+@bkg.xdf
+APPLY
+$gti
+bkg${gtinum}_pcu${pcupattern}.${chan}ch_
+ONE
+TIME
+@col_bkg.pcu${pcupattern}_.txt
+16
+LIGHTCURVE
+RATE
+SUM
+INDEF
+INDEF
+INDEF
+INDEF
+INDEF
+$chan
+INDEF
+saextrctinput
+test -s bkg${gtinum}_pcu${pcupattern}.${chan}ch_.lc && printf "%-30s [ok]\n" bkg${gtinum}_pcu${pcupattern}.${chan}ch_.lc || die "saextrct error";
+
+echo "";
+echo "Background subtraction...";
+lcmath lc${gtinum}_pcu${pcupattern}.${timebin}s.${chan}ch_.lc bkg${gtinum}_pcu${pcupattern}.${chan}ch_.lc lc${gtinum}_pcu${pcupattern}.${timebin}s.${chan}ch_b.lc 1 1 no && printf "%-30s [ok]\n" lc${gtinum}_pcu${pcupattern}.${timebin}s.${chan}ch_b.lc || die "lcmath error";
+echo "" | tee -a $logfile
+echo "Finished!!!" | tee -a $logfile
+echo "TOTAL: lc${gtinum}_pcu${pcupattern}.${timebin}s.${chan}ch_.lc" | tee -a $logfile
+echo "BACK:  bkg${gtinum}_pcu${pcupattern}.${chan}ch_.lc" | tee -a $logfile
+echo "NET:   lc${gtinum}_pcu${pcupattern}.${timebin}s.${chan}ch_b.lc" | tee -a $logfile
+rm -f ./.$$_col_gx

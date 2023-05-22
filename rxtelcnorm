@@ -1,0 +1,78 @@
+#!/bin/sh
+
+
+#Divides rxte light curve rates by number of enebled PCU
+#
+#
+
+die()
+{
+	echo "Error: $1";
+	exit 1;
+}
+
+showhelp()
+{
+	echo "rxtelcnorm [lc] [num_pcus]"
+	echo "lc - Light curve in FITS-file with table extension"
+	echo "num_pcus - divider" 
+}
+
+
+#main()
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#{
+
+#Check input arguments
+if [ $# -ne "2" ] 
+then
+	showhelp
+	exit 1;
+fi;
+
+#Check input file
+if ! [ -r "$1" ]
+then
+	die "File $1 is not found";
+fi;
+infile="$1";
+
+if ! [ -r "orbit.xdf" ] 
+then
+	die "orbit.xdf not found";
+fi;
+
+if !(ftlist $infile option=K section=TELESCOP| grep TELESCOP | grep XTE >/dev/null)
+then
+	echo "It seems to be not correct XTE mission file.";
+	if [ "x$2" == "x" ]
+	then
+		die "Please use second argument to assign dividing coefficient";
+	fi;
+	numpcus="$2";
+else
+	if (ls $infile | grep pcu[0-9]* >/dev/null)
+	then
+		str=${infile##*pcu}
+		str=${str%%.*}
+		#Количество детекторов в даном случае - это просто колечесто цифр после *pcu в имени файла
+		numpcus=${#str};	
+	else
+		if [ "x$2" == "x" ]
+		then
+			die "Please use second argument to assign dividing coefficient";
+		fi;
+		numpcus="$2";
+	fi;
+fi
+
+outfile="${infile%%.lc}tn.lc"
+
+echo "Dividing by $numpcus"
+
+faxbary $infile $outfile @orbit.xdf barytime=no >/dev/null
+fcalc $outfile \!$outfile RATE "RATE/$numpcus"
+fcalc $outfile \!$outfile ERROR "ERROR/$numpcus"
+echo "Saved in $outfile"
+
+#}

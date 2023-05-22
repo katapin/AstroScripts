@@ -1,0 +1,125 @@
+#!/bin/sh
+
+
+#Calculate Good Time intervals and convert it to XRONOS window
+#
+#
+
+die()
+{
+	echo "Error: $1";
+	exit 1;
+}
+
+showhelp()
+{
+	echo "makexronwin [file]"
+	echo "Calculate Good Time intervals and convert it to XRONOS window"
+	echo "file - FITS-file with light curve in table extension or"
+	echo "list of FITS-files. Name of list must start with @-symbol"
+}
+
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#main()
+#{
+
+#Check input arguments
+if [ $# -gt "2" ] 
+then
+	showhelp
+	exit 1;
+fi;
+
+#Check file name
+if [ ${1:0:1} == "@" ]
+then 
+	list="${1:1}"						#Remove symbol '@'
+	if ! [ -r "$list" ]
+	then 
+		die "List-file is not found";
+	fi;
+	#Read list-file
+	while read file						#Checking each file in list	
+	do 								
+		if ! [ -r $file ] 
+		then
+			die "File $file is not found";
+		fi;
+		ftlist ${file}[2] option=T columns="START,STOP" rownum=no colhead=no >>./.$$_rawwin
+	done <$list
+	outfile="win${list#list}"			#Create output file
+else
+	file="$1";
+	outfile="win${file#lc}"				#Create output file				
+	outfile="${outfile%lc}txt"
+	if ! [ -r $file ] 
+	then
+		die "File $file is not found";
+	fi;
+	if !( ftlist "$file" option=H | grep "GTI" >/dev/null);		#Is there GTI-extension?
+	then
+		if ( ftlist "${file}[1]" option=C | grep "RATE1" >/dev/null);
+		then
+			ratecol="RATE1";
+		else
+			if !( ftlist "${file}[1]" option=C | grep "RATE" >/dev/null);
+			then
+				die "There is no RATE column in first fits-extension"
+			fi;
+		ratecol="RATE";		
+		fi;
+		ftlist $file option=T columns="TIME,${ratecol}" rownum=no colhead=no | grep -v NULL >./.$$_lc   #Extract data and remove strings with NULL rates
+octave -i -q  <<octaveinput
+path(path,'/home/Kjsdja/Matlab/drift');
+lc=dlmread('./.$$_lc');
+[wnd,gti]=wndGTI(lc);
+dlmwrite('./.$$_rawwin',gti,' ');
+octaveinput
+	else
+		ftlist ${file}[2] option=T columns="START,STOP" rownum=no colhead=no >>./.$$_rawwin
+	fi;
+fi;
+
+if ! [ "x$2" == "x" ]
+then
+	outfile="$2";
+fi;
+
+
+strcnt=`cat .$$_rawwin | wc -l`
+
+#write result
+echo "$strcnt Windows in this < Xronos Window File > " >$outfile
+echo "$strcnt Time Wind.: start       stop  (days)" >>$outfile
+cat .$$_rawwin | awk '{print "      " $1 "      " $2 "  " NR}' >>$outfile
+cat >>$outfile <<tailstings
+ 0 Phase Wind.: epoch  period  (days)/ start stop (0->1) phases    max   10
+ 0 Ints. Wind. for Orig. Bins in Series 1 : min  max (c/s)         max   10
+ 0 Ints. Wind. for New Bins   in Series 1 : min  max (c/s)         max   10
+ 0 Ints. Wind. for Intervals  in Series 1 : min  max (c/s)         max   10
+ 0 Exps. Wind. for Orig. Bins in Series 1 : min  max (0->50)       max    1
+ 0 Exps. Wind. for New Bins   in Series 1 : min  max (0->50)       max    1
+ 0 Exps. Wind. for Intervals  in Series 1 : min  max (0->50)       max    1
+ 0 Ints. Wind. for Orig. Bins in Series 2 : min  max (c/s)         max   10
+ 0 Ints. Wind. for New Bins   in Series 2 : min  max (c/s)         max   10
+ 0 Ints. Wind. for Intervals  in Series 2 : min  max (c/s)         max   10
+ 0 Exps. Wind. for Orig. Bins in Series 2 : min  max (0->50)       max    1
+ 0 Exps. Wind. for New Bins   in Series 2 : min  max (0->50)       max    1
+ 0 Exps. Wind. for Intervals  in Series 2 : min  max (0->50)       max    1
+ 0 Ints. Wind. for Orig. Bins in Series 3 : min  max (c/s)         max   10
+ 0 Ints. Wind. for New Bins   in Series 3 : min  max (c/s)         max   10
+ 0 Ints. Wind. for Intervals  in Series 3 : min  max (c/s)         max   10
+ 0 Exps. Wind. for Orig. Bins in Series 3 : min  max (0->50)       max    1
+ 0 Exps. Wind. for New Bins   in Series 3 : min  max (0->50)       max    1
+ 0 Exps. Wind. for Intervals  in Series 3 : min  max (0->50)       max    1
+ 0 Ints. Wind. for Orig. Bins in Series 4 : min  max (c/s)         max   10
+ 0 Ints. Wind. for New Bins   in Series 4 : min  max (c/s)         max   10
+ 0 Ints. Wind. for Intervals  in Series 4 : min  max (c/s)         max   10
+ 0 Exps. Wind. for Orig. Bins in Series 4 : min  max (0->50)       max    1
+ 0 Exps. Wind. for New Bins   in Series 4 : min  max (0->50)       max    1
+ 0 Exps. Wind. for Intervals  in Series 4 : min  max (0->50)       max    1
+tailstings
+
+rm .$$_*
+#}

@@ -1,0 +1,42 @@
+#!/usr/bin/perl
+
+#SS433 phase calculator
+
+use Astro::Time;
+
+sub analyzestr
+{
+	$str=$_[0];
+	#YYYY-MM-DD 
+	($year,$month,$day)=$str =~ m/(\d\d\d\d)-(\d\d)-(\d\d)/i;
+	$ut=0;
+	
+	#hh:mm:ss
+	if (($hour,$min,$sec) = $str =~ m/(\d\d):(\d\d):(\d\d)/i )
+	{
+		$ut=($hour*3600+$min*60+$sec)/86400;
+	}
+	$mjd = cal2mjd($day, $month, $year, $ut);
+	$jd=$mjd+2400000.5;
+	#$phi_pr=($jd-2450000)/162.15;				#Fabrika,2004 (Goranskii, 1998)
+	#$phi_orb=($jd-2450023.62)/13.08211;		#Fabrika,2004 (Goranskii, 1998)
+	#$phi_pr=($jd-2451458.12)/162.15;			#Gias,2002,ApJ,556,1069
+	$phi_pr=($jd-2451458.12   +100*162.15)/162.15;			#Gias,2002,ApJ,556,1069
+	$phi_orb=($jd-2450023.76  +350*13.08227)/13.08227;			#Kubota,2010
+	printf("|%4d-%02d-%02d %02d:%02d:%02d|%-12.11lg|%-9.8lg|%-10.9lg|\n",$year,$month,$day,$hour,$min,$sec,$mjd,$phi_pr,$phi_orb);
+}
+
+#Функция main()
+#If arg count greater then 0, use arguments, else read from stdin
+if ($ARGV[0] =~ '^-?(-h)(elp)?$' )		#Show help
+{
+	print "Ephemeris of SS433\nInput timestamps in YYYY-MM-DD hh:mm:ss format from args or stdin.\nOutput format is:\n";
+	printf("|YYYY-MM-DD hh:mm:ss|    MJD     |  phi_pr |  phi_orb |\n");
+	exit(0);
+}
+if ($#ARGV+1) {@input=@ARGV;} else {@input=<STDIN>;}
+
+foreach $str (@input)
+{		
+	analyzestr($str);
+}

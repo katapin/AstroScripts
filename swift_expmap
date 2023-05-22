@@ -1,0 +1,184 @@
+#!/bin/sh
+#############################################################
+#
+#Calculate exposure map for SWIFT data
+#
+#############################################################
+
+
+#################  Basic configuration and info  ############
+declare -rx _SCRIPTNAME="swift_expmap"     #Name of this program
+declare -rx _SCRIPTVERSION="1.0"           #Version of this file
+declare -rx _SCRIPTAUTHOR="Kirill Atapin"  #Author of this program
+#readonly _LOGFILE=""                    #File for logging
+
+readonly _HELPTEXT=" \
+ Usage: $_SCRIPTNAME [options] <evtlist> [<outdir>]
+
+ Create exposure map file for each evt-file in the list
+
+ Arguments:
+  <evtlist>      - ASCII file with names of evt-files
+  <outdir>       - curren directory by default    
+  
+ Options:
+       --dont-combine    Don't combine individual expomaps
+       --skip-errors     Make the combined expomap even if some inidivial
+                           maps have not been produced
+       --force-renew     Renew existing individual expomaps
+   -h, --help            Show this help
+       --verbose=LEVEL   Verbosity level  [default: 0]
+       --version         Show version info"
+
+
+## Load necessarylibraries
+
+#_MYBASHLIB="./bashlib.sh"      #This should be defined in .bashrc
+[ -r "$_MYBASHLIB" ] && source "$_MYBASHLIB" || { echo "Error: Can't \
+load the library. Please check the \$_MYBASHLIB variable." 1>&2; exit 1; }
+
+
+######################  Main functionality   ########################
+
+
+run_swift_expmap()
+{
+    k=0
+    for curline in `cat $arg_infile`
+    do
+        k=$((k+1));
+    
+        dir=`dirname $curline`          #Get folder name
+        evtfile=`basename $curline`     #Get current file name
+        
+        expfile="${outdir}/${evtfile%_cl.ev*}_ex.img"
+        
+        #Get prefix of file name: 'sw' and 11 digits
+        pref=`expr match "$evtfile" '\(sw[0-9]\{11\}\)'` 
+        
+        if [ -r "$expfile" ] && [ $flag_forcerenew != 'true' ]
+        then
+           printcolor "($k/$num_evt_in_list) ${pref} - already exists. Skipping..." "bold"
+           continue
+        fi
+                
+        #Get info about actual att-file
+        ftkeypar $dir/$evtfile attflag;        #Get header keyword
+        attflag=`pget ftkeypar svalue`   #In string value format 
+                
+        case "$attflag" in
+            100) attfile=${pref}sat.fits.gz ;; 
+            110) attfile=${pref}pat.fits.gz ;;
+            111) attfile=${pref}uat.fits.gz ;;
+              *) printf "%d %s Can't determine attfile\n" $linenum $obsid;
+                 printf "%d %s Can't determine attfile %s\n" $linenum $obsid $url>>$logfile
+                break;; 
+        esac;
+                
+        xhdfile="${pref}xhd.hk.gz"
+        command="xrtexpomap infile=$dir/$evtfile attfile=$dir/$attfile hdfile=$dir/$xhdfile clobber=yes chatter=0 cleanup=yes outdir=$arg_outdir"
+        
+        eval_and_log "$command" "$pref: " 0
+        _res=$?
+                
+        if [ $_res -eq 0 ]
+        then
+            printcolor "($k/$num_evt_in_list) ${pref} - success" "bold"
+        else
+            printcolor "($k/$num_evt_in_list) ${pref} - error" "bold"
+            errnum=$((errnum+1));
+        fi;
+                 
+    done;
+}
+
+run_combine() 
+{
+  printcolor "Combining individual exposure maps..." "green"
+  k=0;
+  _ximage_input=.$$.ximage.in
+  for curline in `cat $arg_infile`
+  do
+    k=$((k+1))
+    evtname=`basename $curline`
+    expfile="${outdir}/${evtname%_cl.ev*}_ex.img"
+    echo "#File (#$k/$num_evt_in_list)" >>$_ximage_input
+    if [ ! -f  "$expfile" ]
+    then 
+      echo "#File '$expfile' is not found. Skipping..." >>$_ximage_input
+      continue
+    fi
+    echo "read $expfile" >>$_ximage_input
+    [ $k -eq '1' ] && continue
+    echo -e "sum\nsave" >>$_ximage_input
+  done;
+  echo "write/fits $comb_expmap_name" >>$_ximage_input
+  eval_and_log  "ximage <$_ximage_input" "" 0 && fparkey F ${comb_expmap_name}+0 VIGNAPP add=yes
+  rm $_ximage_input
+  return $?
+  
+
+}
+
+#################### Check input end execute function ###############
+
+#main()
+#{
+
+#Check input arguments:
+readonly arg_infile="${ARGS['<evtlist>']}"
+[[ -f $arg_infile ]] || die "File '$infile' does not exist" 66 1    
+[[ -r $arg_infile ]] || die "File '$infile' is not readable" 66 0
+
+readonly arg_outdir="${ARGS['<outdir>']}"
+[[ -z $arg_outdir ]] && outdir="./" || outdir="$arg_outdir"
+mkdir -p $outdir || die "Can't create '$outdir'" 73
+
+readonly flag_dontcombine="${ARGS[--dont-combine]}"
+readonly flag_forcerenew="${ARGS[--force-renew]}"
+readonly flag_skiperrors="${ARGS[--skip-errors]}"
+
+#Check caldbinit
+if [ -z ${CALDBCONFIG+x} ] 
+then 
+    die "Don't forget to init CALDB!"
+fi;
+
+fversion &>/dev/null || die "Please, run heainit first!"
+
+printcaption
+errnum=0;
+num_evt_in_list=`cat $arg_infile | wc -l`
+run_swift_expmap $arg_infile $outdir
+if [ $errnum -ne 0 ] && [ $flag_skiperrors != 'true' ] 
+then
+  printwarn "$errnum of $num_evt_in_list expomaps have not been \
+  produced. The combining procudure is canceled. If you still wish to \
+  combine the produced files, use the --skip-errors option."
+  exit 1
+fi
+
+num_expmaps_produced=$((num_evt_in_list-errnum))
+
+if [ $errnum -eq 0 ]
+then 
+  printcolor "All the $num_evt_in_list exposure maps have been successfully produced"
+else 
+  printcolor "$num_expmaps_produced of $num_evt_in_list exposure maps have been produced"
+fi
+
+if [ $num_expmaps_produced -gt 1 ] && [ $flag_dontcombine != 'true' ] 
+then
+  comb_expmap_name="${arg_infile%.*}_ex.img"
+  run_combine
+  if [ $? -eq 0 ]
+  then 
+    printcolor "XIMAGE finished without errors! The combined expomap saved as $comb_expmap_name." 
+  else 
+    printwarn "Some errors occured, the combined expomap could not be created. Check the result and logfile."
+  fi
+fi
+[ $errnum -ne 0 ] && printwarn "$errnum individual expomaps were not produced. Check the result carefully."
+
+
+#}

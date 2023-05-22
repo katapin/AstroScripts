@@ -1,0 +1,26 @@
+#!/bin/sh
+
+#Plot some parameter of Filter-file with and without applying GTI 
+
+if [ $# != "3" ] 
+then
+	echo "GTIcheck [filter-file] [gti-file] [column]";
+	echo "Plot some parameter of Filter-file with and without applying GTI";
+	exit 1;
+fi;
+
+ftlist "$1" option=T columns=TIME,"$3" rownum=no colheader=no outfile=.$$_1.txt			#Extract column as text
+fltime "$1" "$2" ./.$$.xfl																#Applay GTI to Filter-file
+ftlist ./.$$.xfl option=T columns=TIME,"$3"	rownum=no colheader=no outfile=.$$_2.txt	#Extract column as text
+ftlist "$2" option=T columns=START,STOP	rownum=no colheader=no outfile=.$$_gti.txt		#Extract column as text
+
+linecount=`cat .$$_1.txt | wc -l`;
+START=`awk '{print $1}' .$$_1.txt | sed -n '1p'`;					#Get a first line of first (time) column
+STOP=`awk '{print $1}' .$$_1.txt | sed -n "${linecount}p"`;			#Get a last line of first (time) column
+oldlength=`echo "$STOP - $START" | bc`;								#Calculate length
+#Get (second)-(first), calculate it and transform from result column to line for summation. How do it simply?
+newlength=$(echo `awk '{print $2 "-" $1}' .$$_gti.txt | bc | tr '\n' '+'`0 | bc);
+echo "There are "`cat .$$_gti.txt | wc -l`" pieces in GTI-file";
+echo "Total observation length decreases from $oldlength to $newlength";
+echo "plot './.$$_1.txt' u 1:2 with lines title 'original', './.$$_2.txt' u 1:2 lt 3 pt 1 title 'GTI applyed'; pause mouse close" | gnuplot;
+rm -f .$$*

@@ -1,0 +1,376 @@
+#!/bin/sh
+#
+#A few string about this program
+#
+
+
+#################  Basic configuration and info  ############
+declare -rx _SCRIPTNAME=xmm_mass_preprocess                          #Name of this program
+declare -rx _SCRIPTVERSION="1.0"                                     #Version of this file
+declare -rx _SCRIPTAUTHOR="Kirill Atapin"                            #Author of this program
+
+#Specific paramters
+STORAGE_PATH="$HOME/operative_data/Xray/XMM"
+JOBLOG_FILENAME="$_SCRIPTNAME-JOBLOG-$(date -I).log"
+PDF_COMPRESS_COMMAND="convert -density 150 -compress jpeg -quality 20 \$_pdf_in \$_pdf_out"
+TAR_SOURCES_COMMAND="tar -cf \$_tar_file primary secondary *README axa*.pdf oif.f*"
+
+#declare -rx _EVAL_DRY_RUN=1
+
+
+#Help and in format readable by docopts
+readonly _HELPTEXT=$(cat <<MARKHELP
+ Usage: $_SCRIPTNAME [options] <obsidlist>
+
+ Run chandra_repro for each ObsID in <obsidlist>
+
+ Arguments:
+   <obsidlist>        ASCI file with ObsIDs
+
+ Options:
+   -j JOBS, --jobs=JOBS  Numer of jobs for parralel execution [default: 3]
+   -s MB, --pdf-size=MB  Try to compress pdf largen than this threshold 
+                         size (in Mb) [default: 1M]
+   -t, --tar             Tar the source files if reprocessing is successul
+       --fresh=DAYS      Assume the date fresh until DAYS days have 
+                         passed [default: 1000]
+   -h, --help            Show this help
+       --verbose=LEVEL   Verbosity level  [default: 0]
+       --version         Show version info
+   
+MARKHELP
+)
+
+  
+## Load the library
+#_MYBASHLIB="./bashlib.sh"      #This should be defined in .bashrc
+[ -r "$_MYBASHLIB" ] && source "$_MYBASHLIB" || { echo "Error: Can't \
+load the library. Please check \$_MYBASHLIB variable." 1>&2; exit 1; }
+
+######################  Main functionality   ########################
+
+_filter_evt() {
+#1 ObsID
+#2 key: EPN or MOS1 or MOS2
+#3 curlog
+
+    declare key=$2
+    declare curlog=$3
+    
+    unset LD_LIBRARY_PATH
+
+    lst_ar=( `ls -1 *E${key^^}*_ImagingEvts.ds 2>/dev/null | tr '\n' ' '` )
+    if [[ ${#lst_ar[@]} -gt 0 ]]
+    then
+        if [[ ${#lst_ar[@]} -gt 1 ]]
+        then
+            for file in ${lst_ar[@]}
+            do 
+                tmp_str=${file%_ImagingEvts.ds}
+                suffix=${tmp_str##*_}
+                printlog "  ObsID=$1: Running xmmflt.py for $file"
+                echo -ne "\n\n Running xmmflt.py for $file\n" >>$curlog
+                eval_and_log "xmmflt.py $file -u $suffix --logfile=$curlog" "  ObsID=$1: " 1 || return 1
+                cp "img_${key}-${suffix}.png"  "${report_dir}/$1-b_img_${key}-${suffix}.png"
+                cp "imgflsh_${key}-${suffix}.png"  "${report_dir}/$1-c_imgflsh_${key}-${suffix}.png"
+            done 
+        else
+            file=${lst_ar[@]}
+            printlog "  ObsID=$1: Running xmmflt.py for $file"
+            echo -ne "\n\n Running xmmflt.py for $file\n" >>$curlog
+            eval_and_log "xmmflt.py $file --logfile=$curlog" "  ObsID=$1: " 1 || return 1
+            cp "img_${key}.png"  "${report_dir}/$1-b_img_${key}.png"
+            cp "imgflsh_${key}.png"  "${report_dir}/$1-c_imgflsh_${key}.png"
+        fi
+    fi
+    
+}
+
+job_repro() {
+#1 ObsID
+  
+    declare -i _res
+    declare command
+    declare curlog="${PWD}/processing-$(date -I).log"
+    declare stderrlog="${PWD}/processing-stderr-$(date -I).log"
+        
+    printcolor " Running processing of ObsID=$1..." "white"
+    
+    rm -rf ./PROC && mkdir ./PROC
+    cd ./ODF 
+    ls *.gz &>/dev/null && { printlog "  ObsID=$1: Unpack ODF files..."; gunzip *.gz >/dev/null; }
+    cd ../PROC
+    
+    echo -ne "`date` - cifbuild\n" >$curlog
+    export SAS_ODF=../ODF
+    printlog "  ObsID=$1: Running cifbuild..."
+    eval_and_log "cifbuild 2>&1 >>$curlog | tee -a $curlog | tee -a $stderrlog" "  ObsID=$1: " 1 || return 1
+    
+    echo -ne "\n\n`date` - odfingest\n" >>$curlog
+    export SAS_CCF=./ccf.cif
+    printlog "  ObsID=$1: Running odfingest..."
+    eval_and_log "odfingest 2>&1 >>$curlog | tee -a $curlog | tee -a $stderrlog" "  ObsID=$1: " 1 || return 1
+    
+    sumfile=`ls -1 *SUM.SAS &>/dev/null` || return 1
+    export SAS_ODF="./$sumfile"
+    if ! [[ -r "odfbrowser.png" ]]
+    then 
+        odfbrowser & >/dev/null
+        pid_odfbrowser=$!
+        sleep 2; scrot --focused "odfbrowser.png"; sleep 2
+        kill -15 $pid_odfbrowser
+    fi
+    cp odfbrowser.png "${report_dir}/$1-a_odfbrowser.png"
+    
+    
+    echo -ne "\n\n`date` - epproc\n" >>$curlog
+    eval_and_log "epproc 2>&1 >>$curlog | tee -a $curlog | tee -a $stderrlog" "  ObsID=$1: " 1 || return 1
+    echo -ne "\n\n`date` - emproc\n" >>$curlog
+    eval_and_log "emproc 2>&1 >>$curlog | tee -a $curlog | tee -a $stderrlog" "  ObsID=$1: " 1 || return 1
+    rm -f *Badpixels.ds
+    
+    #Treat PN files
+    _filter_evt $1 pn $curlog || return 1
+    _filter_evt $1 mos1 $curlog || return 1
+    _filter_evt $1 mos2 $curlog || return 1
+    
+    
+    #then    #Compress fits in repro
+    printlog "  ObsID=$1 compressing files in ./PROC" 
+    for fts in *.ds
+    do
+        eval_and_log "xz -9 $fts" "  ObsID=$1: " 1 || return 1
+    done 
+    
+    for fts in {*.fts,*.evt}
+    do
+        eval_and_log "gzip -9 $fts" "  ObsID=$1: " 1 || return 1
+    done 
+    
+    cd ..
+    date +"%Y-%m-%d" >lastrepro     #Renew lastrepro
+    
+}
+
+job_untar() {
+#1 ObsID
+#2 tar-file
+    
+    declare -i _res
+        
+    printcolor " Unpacking data of ObsID=$1..." "white"
+    eval_and_log "tar --overwrite -xf $2" "  ObsID=$1: " 1 
+    
+    return $?
+
+}
+
+job_compress() {
+#1 ObsID 
+
+    printcolor " Archiving ObsID=$1..." "white"
+    
+    _tar_file="${1}.tar"
+    rm -rf ${1}.tar ${1}.tar.xz
+    printlog "  ObsID=$1: Putting the files into tar..."
+    eval_and_log "tar -cf $_tar_file ODF" "  ObsID=$1: " 1 && \
+        { printlog "  ObsID=$1: Compressing tar with xz..."; \
+        eval_and_log "xz -z -9 $_tar_file" "  ObsID=$1: " 1;} || return 1
+    return 0
+}
+
+job_rm() {
+    
+    rm -r ODF
+    return 0 
+}
+
+process_obsid() {
+#1 ObsID
+#2 current number
+#3 total number of ObsIDs
+
+    declare -i res             #Exit code 
+    declare -i flag_proc=1
+    declare -i flag_tar=0
+    declare -i flag_sources=0
+    
+    declare lastrepro_txt       #String from the lastrepro file
+    declare -i lastrepro_sec    #Date from the lastrepro file converted to seconds
+    declare -i now_sec          #Current time converted to seconds
+    declare -i days
+    declare -a args
+    declare cur_obsid           #Must be not integer because of leadings zeros!
+    declare -i cur_number
+    declare -i total_number
+    
+    #Pasre aruments (stuck together into single string due to gnu parallel)
+    args=( $1 )
+    cur_obsid=${args[0]}
+    cur_number=${args[1]}
+    total_number=${args[2]}
+    
+    cd "${STORAGE_PATH}/$cur_obsid"
+    printcolor "[$cur_number/$total_number] Entering ObsID=$cur_obsid dir..." "cyan"
+    
+    #Check the date of last proccessing 
+    if [ -r "./lastrepro" ]     #Does the file exist
+    then
+        read -e lastrepro_txt <"./lastrepro"
+        lastrepro_sec=$(date -d ${lastrepro_txt} +%s)
+        now_sec=$(date +%s)
+        
+        days="$(( (now_sec-lastrepro_sec)/86400 ))" 
+        
+        if [[ $days -lt $arg_fresh ]]
+        then
+            flag_proc=0
+            printcolor " ObsID=$cur_obsid was processed $days days before. Skipping..." "white"
+        fi
+    fi
+    
+    
+    #Check presence of the source files and tar
+    [[ -d ODF ]] && flag_sources=1 || flag_sources=0
+    ls ${cur_obsid}.tar.xz >/dev/null 2>&1 && { flag_tar=1; tar=$(ls -1 ${cur_obsid}.tar.xz | sed -n 1p); }
+    
+    if [[ flag_tar -ne 0 ]]      #Tar presents
+    then
+        if [[ flag_proc -eq 0 ]]    #Processing is NOT needed         
+        then
+            #Remove source files if present
+            [[ flag_sources -ne 0 ]] && (job_rm; 
+                printlog " ObsID=$cur_obsid: The source files have been removed")
+            return 0
+        fi
+        
+        #Processing is needed
+        if [[ flag_sources -ne 0 ]]  #Source files present
+        then
+            job_repro $cur_obsid;           #Process the data
+            res=$?
+            job_rm                  #Remove source files
+                if [[ $res -eq 0 ]]    #exit if processing succeed
+                then
+                    printcolor " processing of ObsID=$cur_obsid finished successfully"
+                    printlog " Source files for ObsID=$cur_obsid removed"
+                    return 0
+                fi      #Processing failed
+            printcolor " processing of ObsID=$cur_obsid finished with error. \
+Trying with tarred data..."
+            printlog " Source files for ObsID=$cur_obsid removed"
+        fi  #Source files not found
+        job_untar $cur_obsid $tar || (printwarn "Can't exract $tar"; return 1)
+        job_repro $cur_obsid
+        res=$?
+        if [[ $res -eq 0 ]]    #Processed successfully
+        then
+            printcolor " Processing of ObsID=$cur_obsid finished successfully"
+            job_rm     #Remove unneeded source files
+            printlog " ObsID=$cur_obsid: The source files have been removed"
+            return 0
+        else
+            printwarn " Some error occured with ObsID=$cur_obsid. \
+            See logfiles in ${PWD} for details."
+            errnum=$((errnum+1)); return 1
+        fi
+    else    #Tar does not present
+        if [[ flag_sources -eq 0 ]]  #Source files NOT present
+        then 
+            if [[ flag_proc -eq 0 ]]    #Processing is not needed
+            then
+                return 0    #All is OK, nothing to do  
+            else    #Processing is needed
+                printwarn " Can't process ObsID=$cur_obsid. There are no neither original \
+                nor tarred source files. Skipping this ObsID..."
+                return 1
+            fi
+        fi
+        #Source files present
+        if [[ flag_proc -ne 0 ]]    #Processing is needed
+        then  
+            job_repro $cur_obsid;           #Process the data
+            res=$?
+            if [[ $res -ne 0 ]]    #Processing failed
+            then
+                printwarn " Some error occured with ObsID=$cur_obsid. \
+                See logfiles in ${PWD} for details."
+                return 1
+            fi
+            printcolor " Processing of ObsID=$cur_obsid finished successfully"
+        fi
+        job_compress $cur_obsid && printlog " ObsID=$cur_obsid: The data have been successfully archived" || \
+        { printwarn " ObsID=$cur_obsid: Archivation failed"; return 1; }
+        job_rm && printlog " ObsID=$cur_obsid: The source files have been removed"
+    fi
+    
+    return 0;
+}
+
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#main()
+#{
+
+
+#Check input arguments:
+readonly arg_infile="${ARGS['<obsidlist>']}"
+[[ -f $arg_infile ]] || die "File '$infile' does not exist" 66 1    
+[[ -r $arg_infile ]] || die "File '$infile' is not readable" 66 0
+
+declare -rx arg_jobs="${ARGS['--jobs']}"
+declare -rx arg_pdf_size="${ARGS['--pdf-size']}"
+declare -rx arg_fresh="${ARGS['--fresh']}"
+#declare -rx arg_tar="${ARGS['--tar']}"
+
+#Check whether ciao initializated
+sasversion &>/dev/null || die "Please, run sasinit before start" 
+
+#Check whether STORAGE_PATH is absolute of relative
+[ ${STORAGE_PATH:0:1} != "/" ]  && STORAGE_PATH="$INITIALPWD/$STORAGE_PATH"
+readonly STORAGE_PATH && export STORAGE_PATH
+
+declare -a arr_fullobsidlist_raw
+declare -a arr_fullobsidlist_uniq
+declare -i total_obsids=0
+declare -i uniq_obsids=0
+declare -i errnum=0
+declare comptime=0
+declare report_dir="$INITIALPWD/${_SCRIPTNAME}-$(date -I)-$$"
+
+logthistext ""
+logthistext "##################################################################################" 
+printlog    "Start to process ${arg_infile}" 
+
+#Analyze input file and make list of all the ObsIDs
+while IFS='' read -r line 
+do  
+    [ -z "$line" ] && continue;   #Skip zero lines
+    [ ${line:0:1} = \# ] && continue;  #Skip commented lines
+        
+    gal_name="$(cut -d' ' -f1 <<<$line)"            #Get name of galaxy
+    gal_obsidlist_csv="$(cut -d' ' -f2 <<<$line)"   #Get its list in CSV format
+    
+    IFS=',' read -a gal_obsidlist_arr <<< "$gal_obsidlist_csv"  #Convert to array
+    arr_fullobsidlist_raw+=(${gal_obsidlist_arr[@]})    #And append to the full list
+done <$arg_infile
+
+#Make list with only unique elements 
+#And remove leading zeros!
+arr_fullobsidlist_uniq=($(echo "${arr_fullobsidlist_raw[@]}" | tr ' ' '\n' | sort -u -n | tr '\n' ' '))
+
+total_obsids=$(echo "${arr_fullobsidlist_raw[@]}" | tr ' ' '\n' | wc -l )
+uniq_obsids=$(echo "${arr_fullobsidlist_uniq[@]}" | tr ' ' '\n' | wc -l )
+printcolor "$total_obsids ObsIDs found, $uniq_obsids of them are unique" "cyan"
+
+mkdir -p $report_dir
+
+source /usr/bin/env_parallel.bash
+echo "${arr_fullobsidlist_uniq[@]}" | tr ' ' '\n' | awk -v unique="$uniq_obsids" '{print $0" "NR" "unique}' | env_parallel --joblog ${JOBLOG_FILENAME} -u -j $arg_jobs process_obsid 
+
+errnum=$(sed 1d ${JOBLOG_FILENAME}  | cut -f 7 | paste -sd+ | bc)
+comptime=$(sed 1d ${JOBLOG_FILENAME}  | cut -f 4 | paste -sd+ | bc)
+
+printcolor "Finished with $errnum errors spending ${comptime}sec of computation time." "cyan"
+
+#}

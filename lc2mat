@@ -1,0 +1,80 @@
+#!/bin/sh
+
+
+#A few string about this program
+#
+#
+
+die()
+{
+	echo "Error: $1";
+	exit 1;
+}
+
+showhelp()
+{
+	echo "program [arg1] [arg2]"
+}
+
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#main()
+#{
+
+#Check input arguments
+if [ $# != "2" ] 
+then
+	showhelp
+	exit 1;
+fi;
+
+if ! [ -r "$1" ]
+then
+	die "File $1 is not found";
+fi;
+infile="$1";
+
+nHDU=`ftlist $infile option=H | grep HDU | wc -l`				#Count HDU extensions
+nBinTbl=`ftlist $infile option=H | grep BinTable | wc -l`;		#Count BinTable extensions
+if [ $nBinTbl -eq "0" ]
+then
+	die "There are no any BinTable extensions in file $infile";
+fi;
+
+n=0;
+for i in `seq 1 $(($nHDU-1))`
+do
+	if (ftlist $infile[$i] option=K | grep HDUCLAS1 | grep 'CURVE' >/dev/null)
+	then
+		n=$(($n+1));
+		if (ftlist $infile[$i] option=K | grep TTYPE | grep 'RATE1' >/dev/null)
+		then
+			ftlist $infile[$i] option=T columns=TIME,RATE1 rownum=no colhead=no | sed "s/NULL/NaN/g" >.$$_lc$n
+		else
+			ftlist $infile[$i] option=T columns=TIME,RATE rownum=no colhead=no | sed "s/NULL/NaN/g" >.$$_lc$n
+		fi;
+		nLines=`cat .$$_lc$n | wc -l`;
+		echo "HDU$i: $nLines lines extracted";
+cat >>./.$$_prg <<octaveinput
+lc=dlmread('./.$$_lc$n');
+w=lc;
+w(isnan(lc(:,2)),2)=0;
+w(~isnan(lc(:,2)),2)=1;
+lc$2{$n}=lc;
+w$2{$n}=w;
+clear lc w;
+octaveinput
+	else
+		echo "HDU$i: is not light curve. Ignoring...";
+	fi;
+done;
+
+echo "$n light curves have been extracted";
+
+echo "clear ans" >>./.$$_prg
+echo "save('lc$2.mat','-mat')" >>./.$$_prg
+echo "input('Press ENTER to continue...');" >>./.$$_prg
+octave -i -q .$$_prg
+
+#rm -rf .$$*;
+#}

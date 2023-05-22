@@ -1,0 +1,126 @@
+#!/bin/sh
+
+function get_date()
+{
+  filedate=${1:4:8}
+  filehour=${1:12:2}
+  retval=$filedate
+  [ $filehour -lt "12" ] && retval=`date -d "yesterday $filedate" '+%Y%m%d'`
+  echo $retval
+  
+}
+
+#function get_all_fits_keys()
+#{
+  #local -n allkeys=$1  
+  #filename="$2"
+  #filesize=$(stat -c%s "$filename")
+  
+  #chunks=$((filesize/80))
+  #for (( i=1; i<$chunks; i++ )) 
+  #do
+    #items=(`split  --number=$i/$chunks $filename | sed s/"="// | sed s/"\/".*// | sed s/"'"//g`)
+    #[ ${items[0]} == 'END' ] && break
+    #if [ ${items[0]} != "COMMENT" ]; 
+    #then
+        #allkeys[${items[0]}]=${items[1]}
+    #fi
+  #done
+#}
+
+#function get_fits_keys()
+#{
+  #local -n allkeys=$1  
+  #filename="$2"
+  #filesize=$(stat -c%s "$filename")
+  #shift
+  #shift 
+  #required_keys=( $@ )
+  
+  #chunks=$((filesize/80))
+  #for (( i=1; i<$chunks; i++ )) 
+  #do
+    #items=(`split  --number=$i/$chunks $filename | sed s/"="// | sed s/"\/".*// | sed s/"'"//g`)
+    #[ ${items[0]} == 'END' ] && break
+    #if [ ${items[0]} != "COMMENT" ]; 
+    #then
+      #for key in "${required_keys[@]}"
+      #do
+        #if [ "$key" == "${items[0]}" ] 
+        #then 
+          #allkeys[${items[0]}]=${items[1]}
+          #required_keys=( ${required_keys[@]/$key} )
+        #fi
+      #done
+      #[ ${#required_keys[@]} -eq 0 ] && break
+    #fi
+  #done
+#}
+
+for file in *.fits
+do 
+
+  #declare -A keys=()
+  #get_fits_keys keys "$file" PROGID OBJECT DISP SLIT EXPOSURE
+  
+  #prg="${keys[PROGID]}"
+  #obj="${keys[OBJECT]}"
+  #dsp="${keys[DISP]}"
+  #slit="${keys[SLIT]}"
+  #exp="${keys[EXPOSURE]}"
+  
+  #echo $prg $obj $dsp $slit $exp
+  
+  
+  ftkeypar $file[0] PROGID; prg=`pget ftkeypar svalue`; 
+  ftkeypar $file[0] OBJECT; obj=`pget ftkeypar svalue`; 
+  ftkeypar $file[0] DISP; dsp=`pget ftkeypar svalue`; 
+  ftkeypar $file[0] SLIT; slit=`pget ftkeypar svalue`; 
+  ftkeypar $file[0] EXPOSURE; exp=`pget ftkeypar rvalue`; 
+  
+  if [ "$exp" == "1e-05" ]
+  then 
+      exp=0.0
+  fi
+  
+  astrodate=`get_date $file`
+  
+  if [ -z "$obj" ]    #Telescope track was interrupted
+  then 
+      obj='unknown'
+      dest="./$obj/"
+  else
+      if [ "$obj" == 'focus' ]
+      then
+          dest="./$obj/"
+      else
+          if [ -z "$prg" ]
+          then
+              prg='calib'
+          fi
+          if  [ "$obj" == 'arc' ]
+          then
+              dest="./calib/arc/$slit/$astrodate/"
+          elif [ "$obj" == 'dark' ]
+          then
+              dest="./calib/dark/$exp/$astrodate/" 
+          elif [ "$obj" == 'flat' ]  #Move pre-exposure flats into calibration folder too
+          then
+              dest="./calib/flat/$slit/$astrodate/"
+          else
+              dest="./$prg/$astrodate/$obj/" 
+          fi
+          if [ "$prg" == "STD_SED" -o "$prg" == "STD_TELLURIC_A0V" ] && [ "$obj" != 'flat' ] && [ "$obj" != 'arc' ] 
+          then 
+              dest="./$prg/$astrodate/$slit/$obj/" 
+          fi
+      fi
+  fi
+  
+  [ -d '$dest' ] || mkdir -p "$dest"
+  mv "$file" "$dest"
+  echo "$file $prg $obj $dsp $slit $exp"
+  #echo $dest
+  echo "$file $prg $obj $dsp $slit $exp" >>"${dest}obs.list"
+  echo "$file $prg $obj $dsp $slit $exp" >>"obs_all.list"
+done

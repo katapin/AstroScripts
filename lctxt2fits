@@ -1,0 +1,222 @@
+#!/bin/sh
+
+
+#Convert txtfile light curve with columns of data to FITS-file
+#with all valid keyword in header: TSTART, TSTOP, MJDREF and other
+
+die()
+{
+	echo "Error: $1";
+	exit 1;
+}
+
+findcol()
+{
+	if [ `cat $formatfile | grep $1 | grep $2 | wc -l` == "1" ]
+	then 
+		line=`cat $formatfile | grep $1 | grep $2`;
+		line=${line%%=*};		#Remove last part of string after '='
+		echo ${line##$1};		#Get digit after word 'TTYPE'. This keywork usually has format 'TTYPEn' where n refers to column number
+	fi;
+}
+
+gettime()
+{
+	day=`echo "$1 / 86400" | bc`
+	rem=`echo "$1 % 86400" | bc`;
+	hour=`echo "$rem / 3600" | bc`;
+	rem=`echo "$rem % 3600" | bc`;
+	min=`echo "$rem / 60" | bc`;
+	sec=`echo "$rem % 60" | bc`;
+	dat=`printf "%d\t%02d:%02d:%05.3f" $day $hour $min ${sec/./,}`
+	echo ${dat/,/.}
+	
+}
+
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#main()
+#{
+	
+if [ $# != "3" ] 
+then
+	echo "lctxt2fits [txtfile] [fitsfile] [formatfile]"
+	exit 1;
+fi;
+
+if ! [ -r "$1" ]
+then
+	die "File $1 is not found";
+fi;
+
+if [ -r "$2" ]
+then
+	die "File $2 already exist";
+fi;
+
+if ! [ -r "$3" ]
+then
+	die "Format-file is not found";
+fi;
+
+txtfile="$1";				#ASCII text input file
+fitsfile="$2";				#FITS output file
+formatfile="$3";			#Format file for FITS's header
+nf=`sed -n 1p $txtfile | awk '{print NF}'`;		#Get columns number
+nl=`cat $txtfile | wc -l`;						#Get rows number
+echo "File contains ${nf}x$nl table";
+
+#Attempt to serach necessary keywords
+timecol=`findcol TTYPE TIME`
+cat $formatfile | sed 's/[ ]*=[ ]*/=/g' >.$$_header.txt 	#Delete unnecessary spaces
+. ./.$$_header.txt											#Load constants
+if [ -z $timecol ]
+then 
+	die "TIME column is not preset. Please write to formatfile string 'TTYPEn=TIME'";
+fi;
+ratecol=`findcol TTYPE RATE`
+if [ -z $ratecol ]
+then 
+	die "RATE column is not preset. Please write to formatfile string 'TTYPEn=RATE'";
+fi;
+errcol=`findcol TTYPE ERROR`
+if [ -z $errcol ]
+then 
+	echo "Warning: ERROR column is not preset. Using sqrt(var(RATE))";
+	getdatacommand="data=[data(:,$timecol),data(:,$ratecol),ones($nl,1)*std(data(:,$ratecol))];";
+	echo "TTYPE3='ERROR'" >>./.$$_header.txt
+else
+	getdatacommand="data=[data(:,$timecol),data(:,$ratecol),data(:,$errcol)];";
+fi;
+if [ -z $TIMEUNIT ]
+then
+	die "TIMEUNIT keyword is not present. Please write to formatfile string TIMEUNIT='d' or TIMEUNIT='s'"
+fi;
+if [ $TIMEUNIT == 's' ]
+then 
+	if ( [ -z $MJDREFR ] && ( [ -z $MJDREFI ] || [ -z $MJDREFF ] )) 
+	then
+		die "MJDREFR keyword is not present. Please define in formatfile MJDREFR or MJDREFI and MJDREFF";
+	fi;
+fi;
+if [ -z $TIMEDEL ]
+then
+	echo "Warning: TIMEDEL keyword is not preset. Using median time bin";
+	timedelcommand="timestep=median(data(2:end,1)-data(1:(end-1),1)); fprintf(hfid, 'TIMEDEL=%e\n', timestep);";
+else
+	timedelcommand="timestep=$TIMEDEL; fprintf(hfid, 'TIMEDEL=%e\n', timestep);";
+fi;
+if [ -z $TIMEPIXR ]
+then
+	echo "Warning: TIMEPIXR keyword is not preset. Using TIMEPIXR=0.0 (first edge of bin)";
+	echo "TIMEPIXR=0.0" >>./.$$_header.txt
+fi;
+if [ -z $TIMEZERO ]
+then
+	echo "Warning: TIMEZERO keyword is not present. Using TIMEZERO=0 and CLOCKAPP=T";
+	echo "TIMEZERO=0.0" >>./.$$_header.txt
+	echo "CLOCKAPP=T" >>./.$$_header.txt
+fi;
+if [ -z $TIMESYS ] 
+then
+	echo "Warning: TIMESYS keyword is not present. Using TIMESYS='UTC'";
+	echo "TIMESYS='UTC'" >>./.$$_header.txt
+fi;
+	
+#Run Matlab script
+matlab >/dev/null <<matlabprogram
+    fid=fopen('./$txtfile','r');
+    data=str2num(fgetl(fid));
+    while ~feof(fid)
+        data=[data; str2num(fgetl(fid))];
+    end
+    fclose(fid);
+    $getdatacommand
+    
+	%Convert MDJ to seconds and write some data to header
+	hfid=fopen('./.$$_header.txt','at','n','latin1');
+    if ('$TIMEUNIT'=='d')
+        MJDREFR=data(1,1);
+    	data(:,1)=(data(:,1)-MJDREFR)*86400;
+    	fprintf(hfid, 'MJDREFI=%d\n',fix(MJDREFR));
+		fprintf(hfid, 'MJDREFF=%e\n', MJDREFR-fix(MJDREFR));	
+    end
+	$timedelcommand
+    
+    %Create map for GTI
+    map=find((data(2:end,1)-data(1:(end-1),1))>2*timestep);
+    map=[0; map; length(data)];  %Add first and last edges of data array
+    gtiind=[map(1:(end-1),1)+1,map(2:end,1)]; %first - start, second end
+    
+    %Interpolation data and calculation of GTI
+	gtitimes=[0,0];
+	newdata=[0,0,0];
+    
+	[lenh,lenw]=size(gtiind);
+    for i=1:lenh
+        if ((gtiind(i,2)-gtiind(i,1))<4)    %less then 5 points
+            continue;
+        end
+        datapart=data(gtiind(i,1):gtiind(i,2),:);                %Select frame
+        timegrid=(datapart(1,1):timestep:datapart(end,1))';
+        newdata=[newdata; timegrid, interp1(datapart(:,1), datapart(:,2),timegrid,'cubic'), interp1(datapart(:,1), datapart(:,3),timegrid,'cubic')];
+        gtitimes=[gtitimes; timegrid(1), timegrid(end)];
+	end
+	newdata=newdata(2:end,:);
+    gtitimes=gtitimes(2:end,:);
+	
+	%Write data to files
+	fprintf(hfid, 'TSTARTI=%d\n', fix(newdata(1,1)));
+	fprintf(hfid, 'TSTARTF=%e\n', newdata(1,1)-fix(newdata(1,1)));
+	fprintf(hfid, 'TSTOPI=%d\n', fix(newdata(end,1)));
+	fprintf(hfid, 'TSTOPF=%e\n', newdata(end,1)-fix(newdata(end,1)));
+	dlmwrite('./.$$_data.txt',newdata,'delimiter', ' ', 'precision', 16)
+	dlmwrite('./.$$_gti.txt',gtitimes,'delimiter', ' ', 'precision', 16)
+	fclose(hfid);
+matlabprogram
+
+. ./.$$_header.txt			#Reload contstnts after matlab script working
+echo "Have been found `cat .$$_gti.txt | wc -l` Good Time Intervals";
+echo "Refrence MJD" $(gettime `printf "(%d + %10.8f)*86400\n" ${MJDREFI} ${MJDREFF/./,} | tr ',' '.' | bc`)
+echo "Start Time" $(gettime `printf "(%d + %10.8f)*86400 + %d + %10.8f\n" ${MJDREFI} ${MJDREFF/./,} ${TSTARTI} ${TSTARTF/./,} | tr ',' '.' | bc`) 
+echo "Stop Time" $(gettime `printf "(%d + %10.8f)*86400 + %d + %10.8f\n" ${MJDREFI} ${MJDREFF/./,} ${TSTOPI} ${TSTOPF/./,} | tr ',' '.' | bc`) 
+echo "Time bin set to $TIMEDEL s";
+echo "There are `cat .$$_data.txt | wc -l` evenly binned points";
+
+#Create FITS-file and its GTI extension
+echo "TIME 1D" >./.$$_format.txt
+echo "RATE 1D" >>./.$$_format.txt
+echo "ERROR 1D" >>./.$$_format.txt
+fcreate .$$_format.txt .$$_data.txt $fitsfile || die "Cannot create a FITSfile";
+echo "START 1D" >.$$_format.txt;
+echo "STOP 1D" >>.$$_format.txt;
+fcreate .$$_format.txt .$$_gti.txt .$$_gti.fits || die "Cannot create a GTI extension";
+fappend .$$_gti.fits[1] $fitsfile;
+
+#Append some keywords to header
+cat .$$_header.txt | grep -v TTYPE | grep -v TFORM |  grep -v TUNIT  >.$$_header2.txt; mv .$$_header2.txt .$$_header.txt
+echo "TTYPE1='TIME'" >>.$$_header.txt;
+echo "TTYPE2='RATE'" >>.$$_header.txt;
+echo "TTYPE3='ERROR'" >>.$$_header.txt;
+echo "TUNIT1='s'" >>.$$_header.txt;
+echo "TUNIT2='counts/s'" >>.$$_header.txt;
+echo "TUNIT3='counts/s'" >>.$$_header.txt;
+echo "EXTNAME='RATE'" >>.$$_header.txt;
+echo "TIMEUNIT='s'" >>.$$_header.txt;
+echo "HDUCLASS='OGIP'" >>.$$_header.txt;
+echo "HDUCLAS1='LIGHTCURVE'" >>.$$_header.txt;
+echo "HDUCLAS2='TOTAL'" >>.$$_header.txt;
+echo "HDUCLAS3='RATE'" >>.$$_header.txt;
+echo "HDUVERS1= '1.1.0'" >>.$$_header.txt; 
+echo "TIMVERSN= 'OGIP/93-003'" >>.$$_header.txt; 
+fthedit $fitsfile[1] @.$$_header.txt;			#RATE extension with main data table
+cat .$$_header.txt | grep -v TTYPE | grep -v TUNIT | grep -v HDUCLASS | grep -v TIMVERSN >.$$_header2.txt; mv .$$_header2.txt .$$_header.txt
+echo "EXTNAME='STDGTI'" >>.$$_header.txt;
+echo "HDUCLASS='OGIP'" >>.$$_header.txt;
+echo "HDUCLAS1='GTI'" >>.$$_header.txt;
+echo "HDUCLAS2='ALL'" >>.$$_header.txt;
+fthedit $fitsfile[2] @.$$_header.txt;			#STDGTI extension 
+cat .$$_header.txt | grep -v TSTART | grep -v TSTART | grep -v EXTNAME | grep -v HDU >.$$_header2.txt; mv .$$_header2.txt .$$_header.txt
+fthedit $fitsfile[0] @.$$_header.txt;			#Main FITS-header
+rm .$$_*.txt;
+rm .$$_gti.fits;

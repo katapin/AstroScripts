@@ -1,0 +1,185 @@
+#!/bin/sh
+
+
+ARCOMMAND="lzma -9 "
+suffix="lzma"
+COMPLIST="pn_flt.evt
+mos1_flt.evt
+mos2_flt.evt";
+OTHERLIST="img_pn_flt.fts
+img_mos1_flt.fts
+img_mos2_flt.fts
+img_pn_flt.png
+img_mos1_flt.png
+img_mos2_flt.png
+";
+
+compwarlist="";
+
+die()
+{
+	echo "Error: $1" | tee -a $logfile;
+	echo "" >>$logfile;
+	exit 1;
+}
+
+log()
+{
+	echo $* | tee -a $logfile;
+}
+
+processfolder()
+{
+	curpath="$1";
+	ierr=0;
+		
+	#If path not found;
+	if ! [ -d $curpath ] 
+	then
+		log "Error: Folder $curpath is not found. Skipping...";
+		log " ";
+		return 1;
+	fi;
+	
+	#Enter the filder
+	log "Enter $curpath"
+	cd $curpath;
+	if ! [ -d ${curpath}/PROC ] 
+	then
+		log "Error: Folder $curpath havn't been processed yet. Skipping...";
+		log " ";
+		return 1;	 
+	fi;
+	
+	#Create folders in Archive
+	dirlevel=`echo $curpath | sed 's/\//\n/g' | wc -l`;
+	objname=`echo $curpath | cut -d "/" -f$((dirlevel-1))`;
+	obsid=`echo $curpath | cut -d "/" -f${dirlevel}`;
+	curobjpath=${ARCHIVEDIR}/${objname};
+	curarpath=${curobjpath}/${obsid};
+	if ! [ -d $curobjpath ]
+	then
+		mkdir $curobjpath;
+		log "Create $curobjpath for source '${objname}'";
+	fi;
+	if  ! [ -d $curarpath ] 
+	then
+		mkdir $curarpath;
+		log "Create $curarpath for ObsID ${obsid}";
+	fi;
+	if  ! [ -d ${curarpath}/PROC ] 
+	then
+		mkdir ${curarpath}/PROC;
+		log "Create PROC for ObsID ${obsid}";
+	fi;
+	
+	#Compress EVENT-files
+	for filename in $COMPLIST
+	do
+		curfile=${curpath}/PROC/${filename};
+		if [ -r $curfile ] 
+		then
+			destfile=${curarpath}/PROC/${filename}.${suffix};
+			rm -rf $destfile;
+			log "Compress ${filename}...    ";
+			pv $curfile | $ARCOMMAND >$destfile;
+			oldsize=`echo $(stat -c %s $curfile)/1024/1024 | bc`;
+			newsize=`echo $(stat -c %s $destfile)/1024/1024 | bc`;
+			log "Finished:  (${oldsize}Mb)->(${newsize}Mb)";
+			log " ";
+		else
+			log "Warning: $curfile is not found";
+			log " ";
+			ierr=$((ierr+1));
+			compwarlist=${compwarlist}" "${curfile};
+		fi;
+	done;
+	
+	for filename in $OTHERLIST
+	do
+		curfile=${curpath}/PROC/${filename};
+		if [ -r $curfile ] 
+		then
+			destfile=${curarpath}/PROC/${filename};
+			rm -rf $destfile;
+			log "Copy ${filename}";
+			cp $curfile $destfile;
+		else
+			log "Warning: $curfile is not found";
+			ierr=$((ierr+1));
+			otherwarlist=${otherwarlist}" "${curfile};
+		fi;
+	done;
+	
+}
+
+#main()
+#{
+if [ -z $ARCHIVEDIR ]
+then
+	echo "\$ARCHIVEDIR is not defined. Please define it with 'export ARCHIVEDIR=[path]' and start again";
+	exit 1;
+fi;
+if ! [ -d $ARCHIVEDIR ]
+then
+	echo "Archive directory $ARCHIVEDIR is not found. Please create it and start again.";
+	exit 1;
+fi;
+
+#Initital folder path
+PWDSTART=$PWD;
+
+#Log-file
+logfile=$PWD/xmmarchivate.log
+echo "======================================================" >>$logfile
+log "Start packing at " `date`;
+log "";
+
+ktot=0;		#Counter of total processed folders
+ksuc=0;		#Counter of folders with full success
+kunsuc=0;	#Counter of folders with some troubles
+kbad=0;		#Counter of folders which havn't been processed
+#Reading folder names
+while read line           
+do           
+	ktot=$((ktot+1));
+    processfolder $line;
+    if [ $? -eq 0 ]; 
+    then
+		if [[ $ierr -eq 0 ]]
+		then 
+			ksuc=$((ksuc+1));
+			log "Finished!"
+		else 
+			kunsuc=$((kunsuc+1));
+			log "Finished with $ierr troubles";
+		fi
+	else
+		kbad=$((kbad+1));
+	fi;
+	log "";
+done;
+log "Have been proccessed $ktot folders";
+log "$ksuc/$ktot fully successful";
+log "$kunsuc/$ktot with some troubles";
+log "$kbad/$ktot with errors";
+if [ $kunsuc -ne 0 ]
+then
+	echo "See the list of problem files in logfile '$logfile'"
+	log "";
+	echo "Compression error list:">>$logfile
+	
+	for i in $compwarlist
+	do
+		echo $i >>$logfile
+	done;
+	echo " ">>$logfile
+	echo "Copying error list:">>$logfile
+	for i in $otherwarlist
+	do
+		echo $i >>$logfile
+	done;
+else
+	log " ";
+fi;
+#}

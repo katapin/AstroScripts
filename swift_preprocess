@@ -1,0 +1,178 @@
+#!/bin/sh
+#
+#A few string about this program
+#
+
+
+#################  Basic configuration and info  ############
+declare -rx _SCRIPTNAME=swift_xrt_preprocess	                     #Name of this program
+declare -rx _SCRIPTVERSION="1.0"                                     #Version of this file
+declare -rx _SCRIPTAUTHOR="Kirill Atapin"         	                 #Author of this program
+
+#Specific paramters
+
+PROCESS_COMMAND="xrtpipeline exitstage=3 datamode=pc cleanup=no createexpomap=yes extractproducts=no"
+
+#declare -rx _EVAL_DRY_RUN=1
+
+#Help and in format readable by docopts
+readonly _HELPTEXT=$(cat <<MARKHELP
+ Usage: $_SCRIPTNAME [options] <obsidlist> <srcra> <srcdec>
+
+ Clone obsid directories from Swift Archive 
+
+ Arguments:
+   <obsidlist>        ASCII file with ObsIDs
+   <srcra>			  RA of the source (hh:mm:ss)	
+   <srcdec>			  Dec of the source
+
+ Options:
+   -a DIR, --archive-dir=DIR   Directory with archive files [default: swift_archive]
+   -o DIR, --outdir=DIR		   Outdir [default: data]
+   -l LST, --evtlist=LST	   Output evt2 list	[default: evtlist.lst]
+   --nocleanup				   Don\'t remove tmp files
+   --overwrite				   Overwrite outdir
+   -h, --help            Show this help
+       --verbose=LEVEL   Verbosity level  [default: 0]
+       --version         Show version info
+   
+MARKHELP
+)
+
+  
+## Load the library
+#_MYBASHLIB="./bashlib.sh"      #This should be defined in .bashrc
+[ -r "$_MYBASHLIB" ] && source "$_MYBASHLIB" || { echo "Error: Can't \
+load the library. Please check \$_MYBASHLIB variable." 1>&2; exit 1; }
+
+######################  Main functionality   ########################
+copy_files() {
+#1 obsid
+#2 curreprodir
+	declare _obsid="$1"
+	declare _curreprodir="$2"
+	declare -a keys=( "evt2" "expmap" )  # ( "xhd" "att" "instmap" )
+	declare -A files
+	
+	#Get all evt2 files 
+	evtstr=`cd ${_curreprodir} && ls sw${_obsid}xpcw?po_cl.evt`
+	#DEBUG
+		[[ `echo $evtstr | wc -w` -eq 1 ]] || die "ObsID=$_obsid evt is not single!"
+	#DEBUG
+	
+	nameroot=${evtstr%%_cl.evt}
+	
+	files[evt2]="${nameroot}_cl.evt"
+	files[expmap]="${nameroot}_ex.img" 
+	
+	for key in ${keys[@]}
+	do
+		printlog " ObsID=$_obsid: Copying $key..."
+		cp "${_curreprodir}/${files[$key]}" ./ || { printlog " ObsID=$_obsid: Can't copy $key-file (${files[$key]})"; return 1; }
+		printlog " ObsID=$_obsid: Compressing $key..."
+		eval_and_log "gzip -9 ${files[$key]}" " ObsID=$1: " 1 || { printlog " ObsID=$_obsid: Can't gzip $key-file (${files[$key]})"; return 1; }
+	done
+	
+	ftkeypar "${files[evt2]}.gz" DATE-OBS
+	evtdate=`pget ftkeypar value`
+	echo "$evtdate ./$arg_outdir/${files[evt2]}.gz" >>$tmp_evtlistfile
+	return 0
+} 
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#main()
+#{
+
+#Check input arguments:
+readonly arg_infile="${ARGS['<obsidlist>']}"
+readonly arg_srcra="${ARGS['<srcra>']}"
+readonly arg_srcdec="${ARGS['<srcdec>']}"
+readonly arg_archive_dir="${ARGS['--archive-dir']}"
+readonly arg_nocleanup_flag="${ARGS['--nocleanup']}"
+readonly arg_overwrite_flag="${ARGS['--overwrite']}"
+declare -rx arg_outdir="${ARGS['--outdir']}"
+declare -rx arg_evtlist="${ARGS['--evtlist']}"
+[[ -f $arg_infile ]] || die "File '$arg_infile' does not exist" 66 1    
+[[ -r $arg_infile ]] || die "File '$arg_infile' is not readable" 66 0
+
+#Check whether archive_dir is absolute of relative
+archive_dir="$arg_archive_dir"
+[ ${archive_dir:0:1} != "/" ]  && archive_dir="$INITIALPWD/$archive_dir"
+readonly archive_dir && export archive_dir
+[[ -d $archive_dir ]] || die "Directory '$archive_dir' does not exist" 66 1    
+[[ -r $archive_dir ]] || die "Directory '$archive_dir' is not readable" 66 0
+
+#Check whether evtlistfile is absolute of relative
+evtlistfile="$arg_evtlist"
+[ ${evtlistfile:0:1} != "/" ]  && evtlistfile="$INITIALPWD/$evtlistfile"
+readonly evtlistfile && export evtlistfile
+
+if [ ${arg_srcra:0:1} != '"' ] || [ ${arg_srcdec:0:1} != '"' ] 
+then
+	die "Please use backslash with quotes for srcra and srcdec: \\\"hh:mm:ss\\\""
+fi
+
+#Check whether heasoft and caldb initializated
+fversion &>/dev/null || die "Please, run heainit before start" 
+caldbinfo INST Swift XRT &>/dev/null || die "Please, run caldbint before start" 
+
+###Run
+if [[ -d "$arg_outdir" ]] 
+then
+	if [[ $arg_overwrite_flag == "true" ]] 
+	then 
+		(cd ./$arg_outdir && rm -rf sw* repro_* )
+	else 
+		die "Directory './$arg_outdir' already exist. Please user --overwrite to replace the data."
+	fi
+fi
+
+mkdir -p "$arg_outdir"
+cd "./$arg_outdir"
+tmp_evtlistfile="./.$$_evtlist.lst"
+
+
+logthistext "$_ARGSTRING" 1
+printlog "Start to process ${arg_infile}. Archive path: ${archive_dir}, outdir=./$arg_outdir srcra=$arg_srcra, srcdec=$arg_srcdec" 
+
+
+linenum=0;
+errnum=0;
+srcra_ar=(${arg_srcra//:/' '})	#Replace ':' with spaces
+srcdec_ar=(${arg_srcdec//:/' '})
+while read obsid
+do
+	[ -z "$obsid" ] && continue;   #Skip zero lines
+    [ ${obsid:0:1} = \# ] && continue;  #Skip commented lines
+    linenum=$((linenum+1));
+    curlog="repro_$obsid/xrtpipeline-$(date -I).log"
+    
+    printcolor "#${linenum} $obsid"
+    mkdir -p "./repro_$obsid"
+	command="${PROCESS_COMMAND} indir=${archive_dir}/${obsid}/ outdir=./repro_$obsid steminputs=sw${obsid} srcra=${srcra_ar[@]} srcdec=${srcdec_ar[@]} |& tee $curlog" 
+	if ! eval_and_log "$command" "ObsID=$obsid: " 1 # 1 0 
+	then 
+		printwarn "Can\'t process $obsid. See log file ./$arg_outdir/repro_$obsid/$curlog for details."
+		errnum=$((errnum+1))
+		continue
+	fi
+	printcolor " ObsID=$obsid: xrtpipeline - successfull" "white"
+	
+	if ! copy_files $obsid ./repro_$obsid
+	then
+		printwarn "Some trouble occurred with $obsid. See the main log file."
+		errnum=$((errnum+1))
+		continue
+	fi
+	[[ $arg_nocleanup_flag == "false" ]] && rm -rf ./repro_$obsid	#remove repro dirs
+	printcolor " ObsID=$obsid - successfull" "green"	
+	
+done <"${INITIALPWD}/${arg_infile}"
+
+[[ $arg_nocleanup_flag == "false" ]] && rm -f xselect.log xsel_timefile.asc
+sort $tmp_evtlistfile | cut -d ' ' -f 2 >$evtlistfile && rm -f $tmp_evtlistfile
+
+echo "Finished! Errors $errnum/$linenum"
+
+
+#}

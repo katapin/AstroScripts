@@ -1,0 +1,60 @@
+#!/bin/sh
+
+SCRIPTNAME="kgo_check_xzfits"
+DEFAULT_TMPDIR="/tmp"
+
+fversion &>/dev/null || { echo "Please, run heainit first!" ; exit 1; }
+
+
+origfilelist=$(ls *.fits.xz 2>/dev/null ) 
+tmpdir="$DEFAULT_TMPDIR"
+while [ $# -gt 0 ]
+do
+  if [ "$1" == '--flat' ]
+  then
+    origfilelist=$(ls ./*/*.fits.xz 2>/dev/null ) 
+  elif [ "$1" == '--tempdir' ]
+  then
+    [ -z "$2" ] && { echo "Error: wrong argument for $1"; exit 1; } 
+    tmpdir="$2"
+    shift
+  elif [ "$1" == '--help' ]
+  then
+    echo "$SCRIPTNAME [--flat] [--tempdir PATH]"
+    exit 0
+  else
+    echo "Error: unknown option $1"
+    exit 1
+  fi
+  shift
+done
+  
+[ -z "$origfilelist" ] && { echo "There are no *.fits.xz files here"; exit 1; }
+
+
+xztmplist=$(for i in $origfilelist; do echo $tmpdir/`basename $i`; done)
+ftstmplist=$(for i in $origfilelist; do echo $tmpdir/`basename ${i%*.xz}`; done)
+
+mkdir -p "$tmpdir"
+cp -v -t $tmpdir $origfilelist
+if xz -dv $xztmplist
+then
+  for x in $origfilelist
+  do
+    i="$tmpdir/`basename ${x%*.xz}`"
+    ftkeypar $i[0] PROGID; prg=`pget ftkeypar svalue`; 
+    ftkeypar $i[0] OBJECT; obj=`pget ftkeypar svalue`; 
+    ftkeypar $i[0] OBSERVER; obs=`pget ftkeypar svalue`; 
+    ftkeypar $i[0] FILTER; flt=`pget ftkeypar svalue`; 
+    ftkeypar $i[0] EXPTIME; exp=`pget ftkeypar rvalue`; 
+    echo "$x $obs $prg $obj $flt $exp"
+  done | tee obs.list
+else
+  echo "Error: some files are corrupted"
+fi
+
+rm -f $xztmplist
+rm -f $ftstmplist
+[ "$tmpdir" != "$DEFAULT_TMPDIR" ] && rmdir "$tmpdir"
+
+  

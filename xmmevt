@@ -1,0 +1,273 @@
+#!/bin/sh
+
+
+#Automatic preporccessing for XMM-Newton ODF 
+#
+
+PN_EXPRESSION='(PATTERN <= 12)&&(PI in [200:15000])&&(FLAG==0)';
+MOS_EXPRESSION='(PATTERN <= 12)&&(PI in [200:12000])&&(FLAG==0)';
+
+die()
+{
+	echo "Error: $1" | tee -a $logfile;
+	echo "" >>$logfile;
+	exit 1;
+}
+
+log()
+{
+	echo $* | tee -a $logfile;
+}
+
+makeimage()
+{
+	intable=$1;
+	outfts=$2;
+	outimg=$3;
+	rm -rf $outfts $outimg tmpimg.ps;
+	log "Making image";
+	evselect table=$intable withimageset=yes imageset=$outfts xcolumn=X ycolumn=Y imagebinning=imageSize ximagesize=600 yimagesize=600
+	ds9 $outfts -cmap b -scale log -print destination file -print filename tmpimg.ps -print -exit
+
+	if ! [ -r tmpimg.ps ] 
+	then
+		ierr=$((ierr+1));
+		log "Warning: ds9 error";
+	fi;
+	convert -density 300 tmpimg.ps -background white -flatten $outimg
+	rm -rf tmpimg.ps;
+
+}
+
+makepn()
+{
+	log "Create EPIC-PN Event-file";
+	rm -rf pn_flt.evt pn.evt
+	epproc 2>>$logfile;
+	res=$?;		#epproc status
+	pnevt=`ls *EPN*ImagingEvts.ds 2>/dev/null`;
+	resls=$?;	#ls status
+	if ! [[ $res -eq 0 && $resls -eq 0 ]]		
+	then
+		ierr=$((ierr+1));
+		log "Warning: epproc trouble (status $res)";
+		return 1;
+	fi;
+	mv $pnevt pn.evt;		
+	
+	log "Filter PN with $PN_EXPRESSION";
+	evselect table=pn.evt withfilteredset=yes expression="$PN_EXPRESSION" filteredset=pn_flt.evt 2>>$logfile;
+	res=$?;
+	if ! [[ $res -eq 0 && -r pn_flt.evt ]] 
+	then
+		ierr=$((ierr+1));
+		log "Warning: evselect for PN trouble (status $res)";
+		return 1;
+	fi;
+	rm -rf pn.evt;
+	makeimage pn_flt.evt img_pn_flt.fts img_pn_flt.png;	
+}
+
+makemos()
+{
+	log "Create EPIC-MOS Event-files";
+	rm -rf mos1_flt.evt mos1.evt mos2_flt.evt mos2.evt
+	emproc 2>>$logfile;
+	res=$?;
+	mos1evt=`ls *EMOS1*ImagingEvts.ds 2>/dev/null`;
+	resls1=$?;
+	mos2evt=`ls *EMOS2*ImagingEvts.ds 2>/dev/null`;
+	resls2=$?;
+	if ! [[ $res -eq 0 && $resls1 -eq 0 && $resls2 -eq 0 ]] 
+	then
+		ierr=$((ierr+1));
+		log "Warning: emproc trouble (status $res)";
+		return 1;
+	fi;
+	mv $mos1evt mos1.evt;
+	mv $mos2evt mos2.evt;
+	
+	log "Filter MOS with $MOS_EXPRESSION";
+	evselect table=mos1.evt withfilteredset=yes expression="$MOS_EXPRESSION" filteredset=mos1_flt.evt 2>>$logfile;
+	res1=$?;
+	evselect table=mos2.evt withfilteredset=yes expression="$MOS_EXPRESSION" filteredset=mos2_flt.evt 2>>$logfile;
+	res2=$?;
+	
+	rm -rf mos1.evt mos2.evt;
+	if ! [[ $res1 -eq 0 && -r mos1_flt.evt ]] 
+	then
+		ierr=$((ierr+1));
+		log "Warning: evselect for MOS1 trouble (status $res)";
+	else
+		makeimage mos1_flt.evt img_mos1_flt.fts img_mos1_flt.png;
+	fi;
+	if ! [[ $res2 -eq 0 && -r mos2_flt.evt ]] 
+	then
+		ierr=$((ierr+1));
+		log "Warning: evselect for MOS2 trouble (status $res)";
+	else
+		makeimage mos2_flt.evt img_mos2_flt.fts img_mos2_flt.png;
+	fi;
+}
+
+processfolder()
+{
+	curpath="$1";
+	ierr=0;
+	res=0;
+		
+	#If path not found;
+	if ! [ -d $curpath ] 
+	then
+		log "Error: Folder '$curpath is not found. Skipping...";
+		log " ";
+		return 1;
+	fi;
+	
+	#Enter the filder
+	log "Enter $curpath"
+	cd $curpath;
+	if ! [ -d ${curpath}/PROC ] 
+	then
+		log "Create PROC";
+		if ! (mkdir ${curpath}/PROC )
+		then 
+			log "Error: Can't create folder PROC"
+			log " ";
+			return 1; 
+		fi		 
+	fi;
+	
+	#Unpack ODF
+	if (ls ./ODF/*gz >/dev/null 2>&1 )
+	then 	
+		cd ${curpath}/ODF;
+		log -n "Unpacking ODF...    ";
+		
+		if ! (gunzip *.gz )
+		then
+			log -ne "\nError: Can't unpack files\n";
+			log " ";
+			return 1;
+		fi;
+		log "Finished!";
+	fi;
+	cd ${curpath}/PROC;
+	
+	#Create ccf and sum
+	if ! [ -r ./ccf.cif ] 
+	then
+		export SAS_ODF=${curpath}/ODF;
+		log "Create ccf.cif";
+		if ! (cifbuild 2>>$logfile )
+		then
+			log "Error: Can't run cifbuild ";
+			log " ";
+			return 1;
+		fi;
+	else 
+		log "cif.ccf already exist";
+	fi;
+	export SAS_CCF=./ccf.cif;
+	
+	#Create SUM.SAS
+	if ! [ -r ./SUM.SAS ] 
+	then
+		export SAS_ODF=${curpath}/ODF;
+		log "Create SUM.SAS";
+		rm -rf *.SAS;
+		odfingest 2>>$logfile 
+		res=$?;
+		sumfile=`ls *SUM.SAS 2>/dev/null`;
+		resls=$?;
+		if ! [[ $res -eq 0 && $resls -eq 0 ]]
+		then 
+			log "Error: Can't run odfingest";
+			log " ";
+			return 1;
+		fi;
+		mv $sumfile SUM.SAS
+	else 
+		log "SUM.SAS already exist";
+	fi;
+	export SAS_ODF=./SUM.SAS;
+	
+	#############################################
+	#Create PN
+	if ! [ -r pn_flt.evt ] 
+	then
+		makepn;
+	else 
+		log "pn_flt.evt already exist";
+		if ! [[ -r img_pn_flt.fts && -r img_pn_flt.png ]] 
+		then
+			makeimage pn_flt.evt img_pn_flt.fts img_pn_flt.png;
+		fi;
+	fi;
+	
+	#Create MOS
+	if ! [[ -r mos1_flt.evt && -r mos2_flt.evt ]]
+	then
+		makemos;
+	else 
+		log "MOS files already exist";
+		if ! [[ -r img_mos1_flt.fts && -r img_mos1_flt.png ]] 
+		then
+			makeimage mos1_flt.evt img_mos1_flt.fts img_mos1_flt.png;
+		fi;
+		if ! [[ -r img_mos2_flt.fts && -r img_mos2_flt.png ]] 
+		then
+			makeimage mos2_flt.evt img_mos2_flt.fts img_mos2_flt.png;
+		fi;
+	fi;
+	rm -rf *Badpixels.ds
+	
+}
+
+#main()
+#{
+if ! (sasversion >/dev/null 2>&1 )
+then
+	echo "XMM-SAS is not initialized. Please execute 'sasinit' in your terminal and start again."
+	exit 1;
+fi;
+
+#Initital folder path
+PWDSTART=$PWD;
+
+#Log-file
+logfile=$PWD/xmmevt.log
+echo "======================================================" >>$logfile
+log "Start processing at " `date`;
+log "";
+
+ktot=0;		#Counter of total processed folders
+ksuc=0;		#Counter of folders with full success
+kunsuc=0;	#Counter of folders with some troubles
+kbad=0;		#Counter of folders which havn't been processed
+#Reading folder names
+while read line           
+do           
+	ktot=$((ktot+1));
+    processfolder $line;
+    if [ $? -eq 0 ]; 
+    then
+		if [[ $ierr -eq 0 ]]
+		then 
+			ksuc=$((ksuc+1));
+			log "Finished!"
+		else 
+			kunsuc=$((kunsuc+1));
+			log "Finished with $ierr troubles";
+		fi
+	else
+		kbad=$((kbad+1));
+	fi;
+	log "";
+done;
+log "Have been proccessed $ktot folders";
+log "$ksuc/$ktot fully successful";
+log "$kunsuc/$ktot with some troubles";
+log "$kbad/$ktot with errors";
+log "";
+#}

@@ -1,0 +1,68 @@
+#!/usr/bin/perl
+
+
+#Apply barycentric correction to ASM data
+#Link to recipe: http://heasarc.nasa.gov/docs/xte/recipes/asm_recipe.html
+#
+
+use POSIX;
+use Astro::FITS::CFITSIO qw( :longnames );
+
+sub showhelp
+{
+	print "asmfaxbary [input] [output] [orbit]\n";
+	print "Apply barycentric correction to ASM data with faxbary routine\n";
+	print "input - raw ASM FITS-file\n";
+	print "output - correected file\n";
+	print "orbit - list of orbit files\n";
+}
+
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#main()
+#{
+
+
+#Check input arguments
+if ( $#ARGV != 2 )
+{
+	showhelp();
+	exit 1;
+}
+
+die("File $ARGV[0] is not found\n") unless ( -e $ARGV[0] );
+die("File $1ARGV[1] already exist\n") if ( -e $ARGV[1] );
+die("List of orbit files is not found\n") unless ( -e $ARGV[2] );
+my $infile=$ARGV[0];
+my $outfile=$ARGV[1];
+my $orbitlist=$ARGV[2]; 
+
+system "cp $infile $outfile";	
+my $status=0;	
+die("Cannot open FITS-file\n") if (fits_open_file($fptr,$outfile, Astro::FITS::CFITSIO::READONLY(),$status));
+die("Cannot open BINTABLE extension\n") if (fits_movabs_hdu($fptr, 2, Astro::FITS::CFITSIO::BINARY_TBL(), $status));
+die("TSTARTI keyword is not found\n") if (fits_read_key_str($fptr,'TSTARTI',$TSTARTI,undef,$status));
+die("TSTARTF keyword is not found\n") if (fits_read_key_str($fptr,'TSTARTF',$TSTARTF,undef,$status));
+die("TSTOPI keyword is not found\n") if (fits_read_key_str($fptr,'TSTOPI',$TSTOPI,undef,$status));
+die("TSTOPF keyword is not found\n") if (fits_read_key_str($fptr,'TSTOPF',$TSTOPF,undef,$status));
+fits_close_file($fptr, $status);						#Close the file
+$TSTARTI_new = int(($TSTARTI+$TSTARTF)*86400);			#Conver it to seconds
+$TSTARTF_new = ($TSTARTI+$TSTARTF)*86400 - int(($TSTARTI+$TSTARTF)*86400);
+$TSTOPI_new = int(($TSTOPI+$TSTOPF)*86400);
+$TSTOPF_new = ($TSTOPI+$TSTOPF)*86400 - int(($TSTOPI+$TSTOPF)*86400);
+##Correct some keywhords in FITS-header
+system "fparkey $TSTARTI_new $outfile TSTARTI";
+system "fparkey $TSTARTF_new $outfile TSTARTF";
+system "fparkey $TSTOPI_new $outfile TSTOPI";
+system "fparkey $TSTOPF_new $outfile TSTOPF";
+system "fparkey 0.000696574074 $outfile MJDREFF";	#RXTE clock refers to UTC 00/00/94 00:00:00 in TT time system
+system "fparkey 0.0 $outfile TIERABSO";
+system "fparkey s $outfile TUNIT1";					#Units of time-column
+system "fparkey s $outfile TIMEUNIT";				#Units of all time data for XRONOS
+system "fcalc $outfile !$outfile TIME TIME*86400";
+$tmpfile=$outfile . "_tmp";
+system "faxbary $outfile $tmpfile \@$orbitlist tolerance=10 barytime=no";	#Run faxbary
+system "mv $tmpfile $outfile";
+
+
+#}

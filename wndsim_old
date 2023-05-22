@@ -1,0 +1,117 @@
+#!/bin/sh
+
+
+#A few string about this program
+#
+#
+
+die()
+{
+	echo "Error: $1";
+	exit 1;
+}
+
+showhelp()
+{
+	echo "program [arg1] [arg2] [arg3]"
+}
+
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#main()
+#{
+
+#Check input arguments
+#if [ $# != "1" ] 
+#then
+	#showhelp
+	#exit 1;
+#fi;
+
+if ! [ -r "$1" ]
+then
+	die "File $1 is not found";
+fi;
+infile="$1";
+if !( ftlist "${infile}[1]" option=C | grep "TIME" >/dev/null);
+then
+	die "There is no TIME column in first fits-extension"
+fi;
+
+if ( ftlist "${infile}[1]" option=C | grep "RATE1" >/dev/null);
+then
+	ratecol="RATE1";
+else
+	if !( ftlist "${infile}[1]" option=C | grep "RATE" >/dev/null);
+	then
+		die "There is no RATE column in first fits-extension"
+	fi;
+	ratecol="RATE";		
+fi;
+
+symlcname=".$$_symlc.fts";
+winname=".$$_win.txt";
+powout=".$$_powout.fts"
+Tinc=100;
+Mod="$2";
+Nbin="$4";
+logrebin="-1.3";
+maxiter="$3";
+
+ftlist $infile option=T columns="TIME,${ratecol}" rownum=no colhead=no | grep -v NULL >./.$$_lc0   #Extract data and remove strings with NULL rates
+makexronwin $infile $winname >/dev/null;														   #Make XRONOS window-file
+echo "TIME 1D s" >./.$$_format_lc.txt
+echo "RATE 1D count/s" >>./.$$_format_lc.txt
+#Create ocatave script
+cat >./.$$_prg <<octaveinput		
+path(path,'/home/Kjsdja/Matlab/drift');			%Path to Matlab programs
+lc0=dlmread('./.$$_lc0');						%Original light curve
+lc0(:,1)=lc0(:,1)-lc0(1,1);						%Move to start time
+wnd=wndGTI(lc0);								%Make window
+M=mean(lc0(:,2));         						%Mean rate
+T=lc0(end,1);              						%Total length
+dt=gettimestep(lc0)							%Timebin
+R=$Mod;
+modPDS=modelPDS1(R,T*$Tinc,dt);					%Model power for simulation
+system(sprintf('powspec $infile $winname %f $Nbin %f $logrebin outfile=$powout plot=no ',dt,T/(dt*$Nbin)+1));
+system('fcalc $powout !$powout POWER0 POWER histkw=no');
+fprintf('Error\n\n\n?');
+system('fcalc $powout !$powout POWER_SUM 0.0 histkw=no');
+fprintf('Progress: 00.00%%');
+for k=1:$maxiter
+	lc=lcurvegen2(modPDS,M,'s');               		%Create light curve
+	lc=lc(1:length(wnd),:);                         %Trim to window size
+	lc=lc((wnd(:,2)==1),:);							%Window it
+	myplot(lc);
+	drawnow;
+	dlmwrite('.$$_symlc.txt',real(lc),' ');		    %Write light curve
+	system('fcreate .$$_format_lc.txt .$$_symlc.txt $symlcname');		%Convert to FITS
+	system('cphead $infile[1] $symlcname[1]');							%Copy header for original
+	system(sprintf('powspec $symlcname $winname %f $Nbin %f $logrebin outfile=.$$_p1.fts plot=no >/dev/null',dt,T/(dt*$Nbin)+1));
+	system('fdelcol $powout[1] POWER confirm=no proceed=yes');
+	system('ftpaste $powout[1] ".$$_p1.fts[1][col POWER]" !$powout');
+	system('fcalc $powout !$powout POWER_SUM "POWER_SUM+POWER" histkw=no');
+	system('rm $symlcname');
+    if (rem(k,fix($maxiter/100))==0)
+       fprintf('\b\b\b\b\b\b%5.2f%%',100*k/$maxiter);   
+    end 
+end
+system('fcalc $powout !$powout POWER_SUM "POWER_SUM/$maxiter" histkw=no');
+fprintf('\b\b\b\b\b\b\b%5.2f%%\n',100);
+octaveinput
+octave -i -q .$$_prg  	#Run script this in interactive mode. One can run octave with bash document-this mechanism but octave drops gnuplot window
+
+#Prepare graphics
+echo "Plot over" >./.$$_pow.pco
+echo "Log" >>./.$$_pow.pco
+echo "col 1 on 2" >>./.$$_pow.pco
+echo "Line step on 2" >>./.$$_pow.pco
+echo "Err off 3" >>./.$$_pow.pco
+echo "Col 2 on 3" >>./.$$_pow.pco
+fplot $powout FREQUENCY[XAX_E] POWER0[ERROR],POWER_SUM rows="-" device=/XW pltcmd="@.$$_pow.pco"
+
+#Clean up temporary files
+#rm -rf .$$*
+
+#}
+	

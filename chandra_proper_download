@@ -1,0 +1,108 @@
+#!/bin/sh
+#############################################################
+#
+#Calculate exposure map for SWIFT data
+#
+#############################################################
+
+
+
+SCRIPTNAME=chandra_proper_download
+
+die()
+{
+	echo "Error: $1";
+	exit 1;
+}
+
+showhelp()
+{
+	echo "Usage: [-t num] $SCRIPTNAME ObsID1 ObsID2 ...
+Download Chandra ObsIDs with assigned number of retries
+ 
+  -h           display this help and exit
+  -t num       number of retries, default is 5
+  -p proxy     command for proxy (.e.g. proxychains)
+
+"
+}
+
+try_to_download()
+{
+# $1 - ObsID
+# $2 - max retires    
+# $3 - logfile
+for ((i=0; $i<$2; i++))   #Try to download
+    do
+        $proxy_command download_chandra_obsid $1 | tee -a $logfile 
+        res=${PIPESTATUS[0]}
+        if [ $res -eq 0 ]
+        then
+            return 0;
+        fi
+        echo -ne "\nError with ObsID $1. Trying again" | tee -a $logfile 
+    done
+return 1;
+}
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#main()
+#{
+
+#Check input arguments:
+max_retries=5
+#Ckeck each argument
+while getopts "t:p:" Option
+do
+    case $Option in
+    h) showhelp; exit 0;;
+    t) max_retries="$OPTARG"
+        ;;
+    p) proxy_command="$OPTARG"
+        ;;
+    *) showhelp; exit 1
+    esac
+done
+shift $((OPTIND-1))
+
+logfile=log`date -I`.log
+
+#Check whether ciao initializated
+ciao_info &>/dev/null || die "Please, run ciaoinit before start" 
+errnum=0    
+
+if ! [ -z "$proxy_command" ]
+then
+    $proxy_command wget -qO- ya.ru &>/dev/null || die "$proxy_command doesn't not work as proxy" 
+fi
+
+
+##+++++++++++++++++++++++++++++++++++++++++++++=
+
+while [ -n "$1" ]
+do
+    #Check whether argument is integer namber
+    if [[ "$1" =~ ^[0-9]+$  ]]
+    then
+        echo -e "\e[1;37mStarting to download ObsID $1\e[0m" 
+        echo "$(date) -  Starting to download ObsID $1" >>$logfile
+        if ! try_to_download $1 $max_retries $logfile
+        then        #Max retries number is exceed
+            >&2 echo -e "\e[1;33mWarning: Can't download ObsID $1 \e[0m"
+            echo "Warning: Can't download ObsID $1" >>$logfile
+            errnum=$((errnum+1))
+        fi
+    else
+        >&2 echo -e "\e[1;33mWarning: $1 is not ObsID, skipping...\e[0m"
+        echo "Warning: $1 is not ObsID, skipping" >>$logfile
+        errnum=$((errnum+1))
+    fi
+    shift;
+done
+
+echo -e "\e[1;37mFinished with $errnum errors\e[0m"
+echo "$(date) - Finished with $errnum errors" >>$logfile
+
+exit $errnum
+
+#}

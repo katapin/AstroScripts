@@ -1,0 +1,133 @@
+#!/bin/sh
+
+die()
+{
+	echo "Error: $1";
+	exit 1;
+}
+
+getlightcurves()
+{
+	for chans in $CHANLIST
+	do 
+		saextrct <<saextrctin
+$2	
+APPLY
+$3
+bkg_${chans}
+ONE
+TIME
+$4
+16
+LIGHTCURVE
+RATE
+SUM
+INDEF
+INDEF
+INDEF
+INDEF
+INDEF
+${chans}
+INDEF
+saextrctin
+		
+seextrct <<seextrctin
+$1
+APPLY
+$3
+gxe_${chans}
+TIME
+Event
+1
+LIGHTCURVE
+RATE
+SUM
+INDEF
+INDEF
+INDEF
+INDEF
+INDEF
+${chans}
+INDEF
+seextrctin
+
+lcmath <<lcmathin 
+gxe_${chans}.lc 
+bkg_${chans}.lc 
+gxe_${chans}b.lc
+1. 
+1.
+no 
+lcmathin
+	done;
+}
+
+viewlightcurves()
+{
+	
+	for chans in $CHANLIST
+	do 
+		lcurve 1 gxe_${chans}b.lc window="-" dtnb=16 nbint=10000 outfile=" " plot=yes plotdev=/XW <<lcurvein
+la T ${chans}
+p
+$ sleep 1
+q
+lcurvein
+	done;
+}
+
+TTtoUTC()
+{
+	for chans in $CHANLIST
+	do 
+		~/work/bin/rxteTT2UTC gxe_${chans}b.lc gxe_${chans}bt.lc 4
+	done;
+}
+
+crcor()
+{
+	for chans1 in $CHANLIST
+	do 
+		for chans2 in $CHANLIST
+		do 
+			crosscor cfile1=gxe_${chans1}b.lc cfile2=gxe_${chans2}b.lc window="-" dtnb=$1 nbint=$2 nintf=10000 outfile=" " plot=yes plotdev=/XW <<crosscorin
+la T ${chans1}--${chans2}_$1_$2
+p
+
+H ${chans1}-${chans2}_$1_$2.ps/PS
+q
+crosscorin
+		done;
+	done
+}
+
+cropt()
+{ 
+	for chans1 in $CHANLIST
+	do 
+			crosscor cfile1=gxe_${chans1}b.lc cfile2=$3 window="-" dtnb=$1 nbint=$2 nintf=10000 outfile=" " plot=yes plotdev=/XW <<crosscorin
+la T ${chans1}-$3_$1_$2
+p
+
+H ${chans1}-$3_$1_$2.ps/PS
+q
+crosscorin
+	done;
+}
+
+#Test input arguments
+#if [ $# -ne 6 ] 
+if [ $# -ne 7 ] 
+then
+	echo "Using: crcortable [GXE] [BKG] [GTI] [bkg_pculist] [dtnb] [nbint]"
+	exit 1;
+fi;
+
+#CHANLIST="3-4 4-5 5-6 6-7 7-8 8-9 9-10 10-11 11-12 5-8 8-12 5-10 5-12 7-10 7-12 10-12 21-49"
+CHANLIST="3-3 4-4 5-5 6-6 7-7 8-8 9-9 10-10 11-11 12-12 13-13 14-14 15-15 16-16 17-17 18-18 19-19 20-20 5-8 5-9 5-11 7-9 7-11 21-49"
+export LASTCHAN=19;
+export STEP=2
+getlightcurves $1 $2 $3 $4
+viewlightcurves
+#crcor $5 $6
+cropt $5 $6 $7

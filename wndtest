@@ -1,0 +1,85 @@
+#!/bin/sh
+
+
+#Calculates fourier-window in time and frequency domain
+#
+
+
+die()
+{
+	echo "Error: $1";
+	exit 1;
+}
+
+showhelp()
+{
+	echo "wndtest [LC] [prec] [width]"
+	echo "Calculates fourier-window in time and frequency domain"
+	echo "Program obtains from light curve Good Time Intervals and"
+	echo "calculates spectral representation for this window. Then it"
+	echo "calculate convolution with power-model spectrum."
+	echo "LC - Light curve in FITS-file with table extension"
+	echo "prec - precision parameter. Divisor for basic Fourier frequency"
+	echo "width - width of spectral representation. How many basic points use?"
+}
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#main()
+#{
+
+#Check input arguments
+if [ $# != "3" ] 
+then
+	showhelp;
+	exit 1;
+fi;
+
+infile="${1%\[*\]}";   #File name without HDU-extension number
+#Check input file
+if ! [ -r "$infile" ]
+then
+	die "File $infile is not found";
+fi;
+
+if !( ftlist "$1" option=C | grep "TIME" >/dev/null);
+then
+	die "There is no TIME column in first fits-extension"
+fi;
+
+if ( ftlist "$1" option=C | grep "RATE1" >/dev/null);
+then
+	ratecol="RATE1";
+else
+	if !( ftlist "$1" option=C | grep "RATE" >/dev/null);
+	then
+		die "There is no RATE column in first fits-extension"
+	fi;
+	ratecol="RATE";		
+fi;
+
+
+#Data processing
+ftlist $1 option=T columns="TIME,${ratecol}" rownum=no colhead=no | sed "s/NULL/NaN/g" >./.$$_lc   #Extract data and remove strings with NULL rates
+
+#Create ocatave script
+cat >./.$$_prg <<octaveinput		
+path(path,'/home/Kjsdja/Matlab/drift');
+lc=dlmread('./.$$_lc');
+lc(:,1)=lc(:,1)-lc(1,1);
+w=wndGTI(lc);
+myplot(w);
+axis([(-0.05*lc(end,1)) (1.05*lc(end,1)) -0.1 1.1]);
+figure;
+wndtest(w,$2,$3);
+model=@(fr)modelPDS1([1.247909126020244   -1.0229591356360980   0.002719958259856   0.000019362869722 0.000200745588560],fr);
+figure;
+wndapply(w,model,$2,$3);
+input('Press any key to continue...');
+octaveinput
+octave -i -q .$$_prg	#Run script this in interactive mode. One can run octave with bash document-this mechanism but octave drops gnuplot window
+
+#Clean up temporary files
+rm -rf .$$*
+
+
+#}

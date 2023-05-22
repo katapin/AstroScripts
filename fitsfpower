@@ -1,0 +1,80 @@
+#!/bin/sh
+
+
+#Calculates FFT and Scargle/Lomb power specrtra with Octave
+#
+
+
+die()
+{
+	echo "Error: $1";
+	exit 1;
+}
+
+showhelp()
+{
+	echo "fitsfpower [LC]"
+	echo "Calculates FFT and Scargle/Lomb power specrtra with Octave"
+	echo "LC - Light curve in FITS-file with table extension"
+}
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#main()
+#{
+
+#Check input arguments
+if [ $# != "1" ] 
+then
+	showhelp;
+	exit 1;
+fi;
+
+#Check input file
+if ! [ -r "$1" ]
+then
+	die "File $1 not is found";
+fi;
+infile="$1";
+if !( ftlist "${infile}[1]" option=C | grep "TIME" >/dev/null);
+then
+	die "There is no TIME column in first fits-extension"
+fi;
+
+if ( ftlist "${infile}[1]" option=C | grep "RATE1" >/dev/null);
+then
+	ratecol="RATE1";
+else
+	if !( ftlist "${infile}[1]" option=C | grep "RATE" >/dev/null);
+	then
+		die "There is no RATE column in first fits-extension"
+	fi;
+	ratecol="RATE";		
+fi;
+
+
+#Data processing
+ftlist $infile option=T columns="TIME,${ratecol}" rownum=no colhead=no | grep -v NULL >./.$$_lc   #Extract data and remove strings with NULL rates
+
+#Create ocatave script
+echo "Calculating Lomb-Scargle spectrum. It may take a few minutes..."
+cat >./.$$_prg <<octaveinput		
+path(path,'~/Matlab/pds')
+lc=dlmread('./.$$_lc');
+lc(:,1)=lc(:,1)-lc(1,1);
+myplot(lc);
+figure;
+fp=fpower(lc);
+lp=lspower(lc);
+mylog(fp); hold on; mylog(lp,'r'); hold off;
+figure;
+Pfp=rebinlog(fp,1.2);
+Plp=rebinlog(lp,1.2,[],'r');
+input('Press any key to continue...');
+octaveinput
+octave -i -q .$$_prg	#Run script this in interactive mode. One can run octave with bash document-this mechanism but octave drops gnuplot window
+
+#Clean up temporary files
+rm -rf .$$*
+
+
+#}

@@ -1,0 +1,47 @@
+#!/bin/sh
+
+# Convert timesystem of RXTE data from TT to UTC
+
+die()
+{
+	echo "Error: $1";
+	exit 1;
+}
+
+#Test input arguments
+if [ $# -ne 3 ] 
+then
+	echo "Using: rxteTT2UTC [infile] [outfile] [timeshift]"
+	echo "Convert timesystem of RXTE data from TT to UTC"
+	echo "[timeshift] is leap seconds from 1 Jan 1994 00:00:00 (UTC)"
+	exit 1;
+fi;
+
+if ! [ -r "$1" ] 
+then 
+	die "Cannot read $1";
+fi;
+infile="$1";
+if [ -n "$2" ] 
+then
+	outfile="$2";
+else
+	outfile="$infile";
+fi;
+
+#Correct start and stop times
+TSTARTI=`ftlist $infile[1] K | grep -r "^TSTARTI" | awk '{print \$3}' | sed -n 1p`
+TSTOPI=`ftlist $infile[1] K | grep -r "^TSTOPI" | awk '{print \$3}' | sed -n 1p`
+fcalc $infile $outfile TIME "TIME - $3"
+fcalc $outfile[2] \!$outfile START "START - $3"
+fcalc $outfile[2] \!$outfile STOP "STOP - $3"
+echo "MJDREFF=0" >>.$$_header.txt
+echo "TIMESYS='UTC'" >>.$$_header.txt
+echo "TSTARTI=$((TSTARTI-$3))" >>.$$_header.txt
+echo "TSTOPI=$((TSTOPI-$3))" >>.$$_header.txt
+fthedit $outfile[0] @.$$_header.txt
+fthedit $outfile[1] @.$$_header.txt
+fthedit $outfile[2] @.$$_header.txt
+rm .$$_header.txt
+
+

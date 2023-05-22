@@ -1,0 +1,74 @@
+#!/bin/sh
+
+
+#Filter ASM data by fselect with particular 
+#user-defined expression
+#
+
+die()
+{
+	echo "Error: $1";
+	exit 1;
+}
+
+showhelp()
+{
+	echo "asmfilter INFILE OUTFILE expression-file"
+    echo ""
+	echo "Filter ASM data by fselect with particular user-defined expressions."
+	echo "Each expression must be defined as single string in expression-file"
+}
+
+
+#main()
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#{
+
+#Check input arguments
+if [ $# != "3" ] 
+then
+	showhelp
+	exit 1;
+fi;
+
+if ! [ -r "$1" ]
+then
+	die "File $1 is not found"
+fi;
+
+if [ -r "$2" ]
+then 
+	die "File $2 already exist"
+fi;
+
+if ! [ -r "$3" ]
+then
+	die "Expression file is not found";
+fi;
+infile="$1";
+outfile="$2";
+exprfile="$3";
+
+MJDREFI=`ftlist $infile[1] K | grep -e "^MJDREFI" | awk '{print \$3}' | sed -n 1p`
+MJDREFF=`ftlist $infile[1] K | grep -e "^MJDREFF" | awk '{print \$3}' | sed -n 1p`
+TUNIT1=`ftlist $infile[1] K | grep -e "^TUNIT1" | awk '{print \$3}' | sed -n 1p`
+
+echo "Time units: $TUNIT1'"
+echo "MJDREFF:    $MJDREFF"
+echo "MJDREFI:    $MJDREFI"
+
+echo "Call fcalc..."
+if [ "$TUNIT1" == "'d" ]
+then
+	fcalc $infile $outfile MJD "TIME+MJDREFI+MJDREFF";
+else
+	fcalc $infile $outfile MJD "TIME/86400.0+MJDREFI+MJDREFF";		#Use BARYTIM!!!!!!!!!!!!!!
+fi;
+
+echo "Call fselect..."
+while read line
+do
+	fselect $outfile \!$outfile "$line"
+done <$exprfile
+
+#}
