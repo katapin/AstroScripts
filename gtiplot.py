@@ -2,52 +2,57 @@
 #
 #Plot GTI files
 
-import sys
-import os
-import re
+import sys, os, re
 import argparse
-from mypython import * 
-from myfits import *
+import myfits as my
 from astropy.io import fits
 import matplotlib.pyplot as plt
 
-def gtiplot(gtilst,hdulst,lcname,pngname,title=""):
+__progname=os.path.basename(__file__)
+
+def gtiplot(file_hdu_pairs:list, pngname:str=None, lcname:str=None, title:str=""):
+    """Plot GTI intervals together with the light curve.
+
+    Parameters
+    ----------
+    file_hdu_pairs : list
+        List of tuples (filename, hdu_number) to precess.
+    pngname : str, optional
+        Name of a png-file to store the result
+    lcname : str, optional
+        Path to the light curve
+    title : str, optional
+        Title of the figure.
+    """
     color=['m', 'g', 'c', 'r']         #Color list
     gtilev=1                           #Default GTI level
     
     #Plot light curve
     if lcname:
-        ftslc=fitsopen(lcname)
-        time=ftslc[1].data['TIME']
-        rate=ftslc[1].data['RATE']
+        with fits.open(lcname) as ftslc:
+            time=ftslc[1].data['TIME']
+            rate=ftslc[1].data['RATE']
         gtilev=max(rate)*1.05
         plt.plot(time, rate,'b.-')
         plt.ylabel("RATE")
         plt.title(lcname)
         
     #Create rectagular porfiles of GTI
-    for i in range(len(gtilst)):
-        ftsgti = fitsopen(gtilst[i])
-        startcol=ftsgti[hdulst[i]].data['START']
-        stopcol=ftsgti[hdulst[i]].data['STOP']
-        ftsgti.close()
+    for i,pair in enumerate(file_hdu_pairs):
+        gtifile, hdu = pair
+        with fits.open(gtifile) as ftsgti:
+            startcol=ftsgti[hdu].data['START']
+            stopcol=ftsgti[hdu].data['STOP']
+            
         X=[]
         Y=[]
-        for k in range(0, len(startcol)):
-            X.append(startcol[k])
-            Y.append(gtilev*0.05*i)
-            X.append(startcol[k])
-            Y.append(gtilev+gtilev*0.05*i)
-            X.append(stopcol[k])
-            Y.append(gtilev+gtilev*0.05*i)
-            X.append(stopcol[k])
-            Y.append(gtilev*0.05*i)
-           
-        #plt.plot(X, Y,'.-',c='m',label=str(i+1))
+        for k in range(len(startcol)):
+            X += [startcol[k], startcol[k], stopcol[k], stopcol[k]]
+            Y += [gtilev*0.05*i, gtilev+gtilev*0.05*i, gtilev+gtilev*0.05*i, gtilev*0.05*i]
+
         plt.plot(X, Y,'.-',c=color[i],label=str(i+1))
-        i=i+1
         
-    plt.ylim(-0.05*gtilev,gtilev+gtilev*0.05*i)
+    plt.ylim(-0.05*gtilev,gtilev+gtilev*0.05*(i+1))
     plt.xlabel("TIME")
     plt.title(title)
     
@@ -55,16 +60,15 @@ def gtiplot(gtilst,hdulst,lcname,pngname,title=""):
         plt.draw()
         plt.savefig(pngname)
         if not os.path.isfile(pngname):
-            printwarn("Cannot save the figurm re into '%s'." % pngname,
-            "gtiplot")
-            return False
+            my.printwarn("Cannot save the figure into '{pngname}'.", __progname)
+            raise my.TaskError(__progname, filename=pngname)
     else:
         plt.show()
     return True
    
     
-if __name__ == '__main__':    
     
+def _main():
     #Parse the arguments
     parser = argparse.ArgumentParser(description="Plot Good Time "
     "Intervals (GTI) as П-like functions")
@@ -73,48 +77,36 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--rate', nargs='?', help="plot GTI over "
     "the background light curve")
     parser.add_argument('gtifiles', nargs='+', help="GTI extension in "
-    "a format of 'filname[HDU]'")
+    "a format 'filname[HDU]'")
     
     argnspace=parser.parse_args(sys.argv[1:])
     pngname=argnspace.save          #Image filename
     lcname=argnspace.rate           #Light curve
 
-    gtilst=[]
-    hdulst=[]
+    pairs=[]
     #Parse each input arguments and check them
-    for arg in argnspace.gtifiles:
-        # (filename)([HDU])
-        match=re.match("(.*?)(\[(\d+)\])?$", arg)
-        if not match:
-            print("Error: Incorrect syntax")
-        
-        filename=match.group(1)
-        if not os.path.isfile(filename):
-            die("File '%s' is not found" % filename)
-        HDU = int(match.group(3)) if match.group(2) else 1
+    for curentry in argnspace.gtifiles:
+        curpair = my.fits_parse_expression(curentry)
+        if curpair == None:
+            my.die("Can't parse input expression. Incorrect syntax")
             
-        #Open the file 
-        ftsgti = fitsopen(filename)
-        if len(ftsgti)<=HDU:
-            die("There is no HDU number '%d' in %s" % (HDU, filename))
+        hdu = int(curpair[1]) if curpair[1]!=None else 1
+        filepath=my.fits_check_file_is_gti(curpair[0], hdu)
+        pairs.append((filepath, hdu))
         
-        if not chkisgti(ftsgti[HDU]):
-            die("'%s' is not a valid GTI extension" % 
-            (filename+"["+str(HDU)+"]"),"gtiplot")
-        ftsgti.close()
-        gtilst.append(filename)
-        hdulst.append(HDU)
+    if pngname:
+        my.check_file_not_exist_or_remove(pngname, overwrite=True)
     
     if lcname:
-        ftslc=fitsopen(lcname)
-        if not chkislc(ftslc[1]):
-            printwarn("'%s' is not a valid light curve extension" % 
-            (lcname+"["+str(1)+"]"),"gtiplot")
-        ftslc.close()
+        my.fits_check_file_is_lc(lcname)
     
-    if not gtiplot(gtilst,hdulst,lcname,pngname):
-        die("Cannot plot the figure","gtiplot")
+    try:
+        gtiplot(pairs, pngname, lcname)
+    except Exception as ex:
+        my.die(f'{ex}. Cannot plot the figure',__progname)
     
+if __name__ == '__main__':    
+    _main()
 
     
     

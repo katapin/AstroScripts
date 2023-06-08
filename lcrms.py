@@ -36,7 +36,7 @@ class IntStat:
         rs2=rs**2
         rm2=rm**2
         
-        if rs2>e2m: 
+        if rs2>e2m:  # (sigma)^2 > (mean error)^2
             Frms = sqrt(rs2-e2m)/rm  
             self.Frms_err = sqrt( (sqrt(2/ng)*e2m/rm2)**2 + \
             (2*sqrt(e2m/ng)*Frms/rm)**2 )/(2*Frms)
@@ -166,7 +166,7 @@ def writegtixron(filename,thresh_newbin,thresh_interv):
         "     %s\t\t50.0     1\n" % str(thresh_interv/100))
         
    
-def calculatelcrms(lcurve, dt, intervlen, thresh_newbin, thresh_interv):
+def calculatelcrms(lcurve, dt, intervlen, thresh_newbin=80, thresh_interv=50):
     pid=os.getpid()                 #PID for temporary files
     tmpgtifile=".%s.wi" % pid       #GTI in XRONOS format
     tmplcfile=".%s.flc" % pid       #Rebined and splitted light curve
@@ -176,7 +176,7 @@ def calculatelcrms(lcurve, dt, intervlen, thresh_newbin, thresh_interv):
     writegtixron(tmpgtifile,thresh_newbin,thresh_interv)
     
     #Prepare light curve"
-    COMMAND="lcurve nser=1 cfile1=./%s window=./%s dtnb=%f nbint=%d " \
+    COMMAND="lcurve nser=1 cfile1=%s window=./%s dtnb=%f nbint=%d " \
     "outfile=%s plot=no >/dev/null" % (lcurve, tmpgtifile, dt, intervlen, tmplcfile)
     if not callftools(COMMAND):
         printerr("Something is going wrong: 'lcurve' finished with"
@@ -188,12 +188,12 @@ def calculatelcrms(lcurve, dt, intervlen, thresh_newbin, thresh_interv):
         "Try to change frequency range or decrease threshold (-h to see help)\n")
         return
         
-    ftslc = fitsopen(tmplcfile)       #Rebined light curve FITS
+    ftslc = fits.open(tmplcfile)       #Rebined light curve FITS
     lcstat = TotalStat(ftslc)
     ftslc.close()
 
     #Compute power spectrum 
-    COMMAND="powspec cfile1=./%s window=./%s dtnb=%f nbint=%d nintfm=%d " \
+    COMMAND="powspec cfile1=%s window=./%s dtnb=%f nbint=%d nintfm=%d " \
     "outfile=%s rebin=-1.1 plot=no fast=no norm=-2 >/dev/null" % (lcurve, \
     tmpgtifile, dt, intervlen, lcstat.nInt, tmppdsfile)
     if not callftools(COMMAND):
@@ -201,7 +201,7 @@ def calculatelcrms(lcurve, dt, intervlen, thresh_newbin, thresh_interv):
         " error.")
         return
         
-    ftsps = fitsopen(tmppdsfile)
+    ftsps = fits.open(tmppdsfile)
     X=ftsps[1].data['FREQUENCY']
     Y=ftsps[1].data['POWER']
     Yerr=ftsps[1].data['ERROR']
@@ -224,6 +224,8 @@ def calculatelcrms(lcurve, dt, intervlen, thresh_newbin, thresh_interv):
     os.remove(tmplcfile)
     os.remove(tmpgtifile)
     os.remove(tmppdsfile)
+    
+    return lcstat.aFrms, lcstat.eaFrms
     
 
 if __name__ == '__main__':    
@@ -268,7 +270,7 @@ if __name__ == '__main__':
 		#die("There is no HDU number '%d' in %s" % (lchdu, lcname),
 		#"lcrms") 
    
-    fts=fitsopen(lcurve)    
+    fts=fits.open(lcurve)    
     #if not chkislc(fts[1]):
         #die("'%s' is not a valid FITS light" % lcurve, "lcrms")
       
