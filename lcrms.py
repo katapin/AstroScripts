@@ -225,7 +225,11 @@ def calculatelcrms(lcurve, dt, intervlen, thresh_newbin=80, thresh_interv=50):
     os.remove(tmpgtifile)
     os.remove(tmppdsfile)
     
-    return lcstat.aFrms, lcstat.eaFrms
+    # print(lcstat.nInt); exit(0)
+    if lcstat.nInt > 2:
+      return lcstat.aFrms, lcstat.eaFrms
+    else:
+      return lcstat.aFrms, lcstat.aFrmsErr 
     
 
 if __name__ == '__main__':    
@@ -257,18 +261,18 @@ if __name__ == '__main__':
     #############################################################
     #Check input data
     
-	## Match FITS filename and HDU (filename)([HDU])
-	#match=re.match("(.*?)(\[(\d+)\])?", lcurve)
-	#if not match:
-		#die("Incorrect syntax","lcrms")
-	#lcname=match.group(1)
+  ## Match FITS filename and HDU (filename)([HDU])
+  #match=re.match("(.*?)(\[(\d+)\])?", lcurve)
+  #if not match:
+    #die("Incorrect syntax","lcrms")
+  #lcname=match.group(1)
     #lchdu = int(match.group(3)) if match.group(2) else 1
         
-	##Try to open the file 
-	#fts = fitsopen(lcname)
-	#if len(fts)<=lchdu:
-		#die("There is no HDU number '%d' in %s" % (lchdu, lcname),
-		#"lcrms") 
+  ##Try to open the file 
+  #fts = fitsopen(lcname)
+  #if len(fts)<=lchdu:
+    #die("There is no HDU number '%d' in %s" % (lchdu, lcname),
+    #"lcrms") 
    
     fts=fits.open(lcurve)    
     #if not chkislc(fts[1]):

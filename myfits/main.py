@@ -1,9 +1,9 @@
 """General purpose functions."""
 
-import sys, os, re
+import os, re, copy
 from typing import Union, Self, Callable, Type
 from pathlib import PurePath
-from astropy.io import fits, ascii
+from astropy.io import fits
 import mypython as my
 from mypython import Actions, FilePath, FilePathAbs
 
@@ -27,50 +27,61 @@ class TaskError(Exception):
 
 
 class ExtFileName:
-    """Extended filename to store also hdu number and columns of FITS/ASCII tables."""
+    """Extended filename to store also hdu number and columns of FITS/ASCII tables.
+
+    Notes. The PurePath's constructor calls str(os.fspath(obj)) for each
+    of the input arguments and then uses the resultant string with '/'.join().
+    The function os.fspath() do nothing for subclasses of str and calls
+    __fspath__() otherwise. Therefore, if ExtFileName is a subclass of str,
+    it must return the pure filename (i.e. without hdu or filter) via
+    its __str__ method. If it is of any other type, the filepath must be
+    returned by __fspath__, and the magic __str__ may have any output.
+    """
 
     def __init__(self, name: str, hdu: Union[int, str] = None, filter=None):
-        self.name = name
+        self._name = self._name_check(name)
         self.hdu = hdu
         self.filter = filter
+        
+    @classmethod
+    def _name_check(cls, name):
+        if not isinstance(name, str) or \
+                my.FilePath(name).name != name:
+            raise ValueError(f"Incorrect name '{repr(name)}'. Only pure "
+                             "string names are allowed (not paths or other objects).")
+        if '[' in name or ']' in name:
+            my.printwarn(f"you are using square brackets in name: {name}.",
+                         cls.__name__)
+        return name
 
     def __str__(self):
-        text = self._filename
-        hdu = self._hdu
-        if hdu:
-            text += '[{}]'.format(hdu if type(hdu) == int else f"'{hdu}'")
+        lst = [self._name]
+        if self._hdu:
+            lst.append("[{!r}]".format(self._hdu))
         if self.filter:
-            text += "[{}]".format(str(self.filter))
-            # TODO automatically change type of quote
-        return text
+            lst.append("[{!r}]".format(self.filter))
+        return ''.join(lst)
 
     def __repr__(self):
-        lst = [self._filename]
-        hdu = self._hdu
-        if hdu:
-            lst.append('hdu={}'.format(hdu if type(hdu) == int else f"'{hdu}'"))
-        if self.filter:
-            lst.append("filter={}".format(repr(self.filter)))
-        return '<{}({})>'.format(self.__class__.__name__, ', '.join(lst))
+        return '<{}({!r}, hdu={!r}, filter={!r})>'.format(
+            self.__class__.__name__, self._name, self._hdu, self.filter)
 
     def __fspath__(self):
         """Return filename for os.fspath()."""
-        return self._filename
+        return self._name
+
+    def __rtruediv__(self, other):
+        if isinstance(other, (str, os.PathLike)):
+            return ExtPath(other, self)
+        return NotImplemented
+
+    def get_opts(self):
+        """Return hdu and filter arguments as a dict."""
+        return dict(hdu=self._hdu, filter=self.filter)
 
     @property
     def name(self):
-        return self._filename
-
-    @name.setter
-    def name(self, filename):
-        if not isinstance(filename, str) or \
-                my.FilePath(filename).name != filename:
-            raise ValueError(f"Incorrect filename '{repr(filename)}'. Only pure "
-                             "string filenames are allowed (not paths or other objects).")
-        if '[' in filename or ']' in filename:
-            my.printwarn(f"you are using square brackets in filename: {filename}.",
-                         self.__class__.__name__)
-        self._filename = filename
+        return self._name
 
     @property
     def hdu(self):
@@ -92,71 +103,113 @@ class ExtFileName:
 
     @classmethod
     def from_string(cls, expression: str, without_hdu=False):
+        """Create the object from the parse_string() result."""
         return cls(*cls.parse_string(expression, without_hdu))
 
+    @staticmethod
+    def _process_filter(match1, without_hdu):
+        if without_hdu is True:
+            filter = match1.group(2)
+            if match1.group(3):
+                raise ValueError(f"Inadmissible expression {match1.group(3)} "
+                                 "in the second pair of brackets.")
+        else:
+            filter = match1.group(3)
+
+        if filter and len(filter) > 2 and filter[0] == filter[-1] and \
+                (filter[0] == '"' or filter[0] == "'"):
+            filter = filter[1:-1]
+
+        return filter
+
     @classmethod
-    def parse_string(cls, expression: str, without_hdu: bool = False, only_path: bool = False):
+    def parse_string(cls, expression: str, without_hdu: bool = False,
+                     only_path: bool = False):
         """Parse if expression has a format "file.fts[hdu]['filter']".
 
-        Here hdu may be an integer representing an ordering number of the HDU or
-        a string representing the HDU's name. If the expression can't be matched,
-        it returns None. The existence of the hdu won't be checked.
+        Here hdu may be an integer representing an ordering number of the HDU in
+        the FITS file or a string representing the HDU's name. The existence
+        of the HDU won't be checked. Path and filter can be any strings.
 
-        Parameters
-        ----------
-        expression : str
-            Expression to analyse.
-
-        without_hdu : bool
-            Don't try to search for the hdu keys. Consider the first square brackets
-            to be the filtering expression.
-
+        :param expression: String expression to analyse.
+        :param without_hdu: If True it allows to omit the hdu key and
+            consider the string in the first square brackets as
+            the filtering exporession.
+        :param only_path: Ignore the hdu and filter keys and return
+            only the filepath. It may be useful for isolation of
+            the pure filepath from the total expression without
+            printing warnings.
+        :return: The tuple of three elements: tuple(path, hdu, filter),
+            where the path van be empty string while hdu and filter
+            can be None.
+        :raises ValueError:when the hdu string cannot be parsed.
         """
         hdu, filter = None, None
         match1 = re.match("(.*?)(?:\[(.*?)])?(?:\[(.*?)])?$", expression)  # It always gives some result,
         # at least match1.group(1) always exists but may be not a filename
         if only_path:
             return match1.group(1), hdu, filter
-        if match1.group(2):  # Parse first brackets
-            hdustr = match1.group(2).replace('"', '').replace("'", '')  # remove all quotes
-            if match2 := re.match("""^(\d+)|(\w+)$""", hdustr):  # int or string
-                if match2.group(1):
-                    hdu = int(match2.group(1))
-                elif match2.group(2):
-                    hdu = str(match2.group(2))
-            else:  # Can't parse hdu key
-                without_hdu = True
-                my.printwarn(f"the string {match1.group(2)} will be "
-                             "interpreted as the filtering expression.", cls.__name__)
 
-            if without_hdu == True:
-                filter = match1.group(2)
-                if match1.group(3):
-                    raise ValueError(f"Inadmissible expression {match1.group(3)} "
-                                     "in the second pair of brackets.")
-            else:
-                filter = match1.group(3)
+        if without_hdu is False:
+            if match1.group(2):  # Parse first brackets
+                hdustr = match1.group(2).replace('"', '').replace("'", '')  # remove all quotes
+                if match2 := re.match("""^(\d+)|(\w+)$""", hdustr):  # int or string
+                    if match2.group(1):
+                        hdu = int(match2.group(1))
+                    elif match2.group(2):
+                        hdu = str(match2.group(2))
+                else:  # Can't parse hdu key
+                    without_hdu = True
+                    my.printwarn(f"the string {match1.group(2)} will be "
+                                 "interpreted as the filtering expression.", cls.__name__)
+
+        filter = cls._process_filter(match1, without_hdu)
         return match1.group(1), hdu, filter
 
 
 class ExtPath(FilePath):
+    """Extend FilePath to store FITS's hdu and filtering expression
+
+    The object can be constructed from path, path + ExtName, string or
+    other ExtPath, where path is any os.Pathlike object; HDU and
+     filter can be passed as keyword arguments."""
+
     def __new__(cls, *args: Union[str, PurePath, ExtFileName], **kwargs):
-        superargs = list(args)  # Rectified arguments to pass them to super()
-        if len(superargs) < 1:
-            superargs[0] = ''
-        if isinstance(superargs[-1], str):  # Try to parse string
+        superargs = list(args) if len(args)>0 else ['']
+        last = superargs[-1]  # the last argument
+        if isinstance(last, ExtFileName):
+            extname = ExtFileName(last.name, **kwargs) if kwargs else copy.copy(last)
+        elif isinstance(last, PurePath):
+            extname = copy.copy(last._extname) if hasattr(last, '_extname') else \
+                ExtFileName(last.name, **kwargs)
+        elif isinstance(last, str):  # Try to parse string
             # Split to the pure string path and its extended part
-            strpath, hdu, filter = ExtFileName.parse_string(args[-1], only_path=bool(kwargs))
+            strpath, hdu, filter = ExtFileName.parse_string(last, only_path=bool(kwargs))
             extname_extra_args = kwargs or {'hdu':hdu, 'filter':filter}
-            fpath = my.FilePath(strpath)
-            extname = ExtFileName(fpath.name, **extname_extra_args)
-            superargs[-1] = fpath
-        elif isinstance(superargs[-1], (ExtFileName, PurePath)):
-            extname = cls._make_extname(superargs[-1], **kwargs)
+            extname = ExtFileName(my.FilePath(strpath).name, **extname_extra_args)
+            superargs[-1] = strpath   # save the string without the tail [hdu][filter]
         else:
-            raise TypeError(f"Unsupported type of argument: {type(superargs[-1])}.")
+            raise TypeError(f"Unsupported type of argument: {type(last)}.")
         obj = super().__new__(cls, *superargs)
         obj._extname = extname
+        return obj
+
+    def _from_parsed_parts(self, drv, root, parts):
+        """Construct object from parts.
+
+        This function overrides the PurePath's classmethod(!) used to
+        create derivative subpaths from the original path (for self.with_name,
+        self.parent, etc.). Now, it will be an ordinary method which gets extname
+        from 'self' and puts it into the child object.
+        """
+        ancestor={ExtPath: FilePath, ExtPathAbs: FilePathAbs}
+        cls = self.__class__
+        name = os.fspath(parts[-1]) if len(parts) > 0 else ''
+        #   for self.parent                   for self.with_parent
+        if len(parts) != len(self._parts) and name != self.name:
+            cls = ancestor[cls]
+        obj = FilePath._from_parsed_parts.__func__(cls, drv, root, parts)
+        obj._extname = self._extname
         return obj
 
     def __fspath__(self):
@@ -165,39 +218,32 @@ class ExtPath(FilePath):
 
     def __str__(self):
         """Return string representation."""
-        tail = str(self.extname)[len(self.extname.name):]
+        tail = str(self._extname)[len(self._extname.name):]
         return super().__str__() + tail
 
-    def __radd__(self, other):
-        """Append string or path from the right."""
-        if isinstance(other, str):
-            # Remove '/' in abs path:
-            parstr = str(my.FilePath(self.parent))
-            return self.__class__(other, parstr[1:] if parstr[0] == '/' else parstr,
-                                  self._extname)
-        return NotImplemented
+    def __repr__(self):
+        return "{}({!r}/{})".format(self.__class__.__name__,
+                                    str(self.parent), repr(self._extname))
 
-    @staticmethod
-    def _make_extname(obj: PurePath, **kwargs):
-        return obj._extname if hasattr(obj, '_extname') else ExtFileName(obj.name, **kwargs)
+    def __truediv__(self, other):
+        """Return self / other."""
+        raise TypeError(f"Unsupported operation for {self.__class__}")
+
+    def __rtruediv__(self, other):
+        """Return other / self."""
+        if isinstance(other, (str, os.PathLike)):
+            return self.__class__(other, self)
 
     @property
     def extname(self):
         """Return name as a ExtFileName object."""
-        # Each part of self.parents also has type=ExtPath, unfortunately
-        return self._make_extname(self)
+        return self._extname
 
     @property
     def hdu(self):
-        """Return hdu of the ExtFileName."""
-        return self.extname.hdu
+        return self._extname.hdu
 
     def with_extname(self: Self, new_extname: ExtFileName) -> Self:
-        return self.__class__(self.parent, new_extname)
-
-    def with_name(self: Self, name: str) -> Self:
-        extname = self._extname
-        new_extname = ExtFileName(name, extname.hdu, extname.filter)
         return self.__class__(self.parent, new_extname)
 
 
@@ -209,29 +255,6 @@ ExtPath._class_abspath = ExtPathAbs
 ExtPathAbs._class_abspath = ExtPathAbs
 
 
-def logging_turn_on(logfile:str, progname:str=''):
-    """Turn on the logging in the user's scripts.
-
-    Helper function that checks presence of the logfile, enables logging and
-    writes starting message with sys.argv parameters of the script. If the file
-    at provided path exists, it prints error and calls sys.exit().
-
-    Parameters
-    ----------
-    logfile : str
-        Path to logfile
-    progname : str, optional
-        Name of script to write it in the logfile. The default is ''.
-
-    """
-    my.check_file_not_exist_or_remove(logfile, overwrite=False, action=my.Actions.DIE,
-             extra_text='Please use another name or remove it manually.')
-    my.set_logfile(logfile)
-    args = sys.argv.copy()
-    args[0] = os.path.basename(args[0])
-    my.logtext('Started as "{}"'.format(' '.join(args)), progname)
-
-
 ###############################################
 ####  Checks of the file format ###############
 
@@ -239,9 +262,9 @@ def logging_turn_on(logfile:str, progname:str=''):
 def _helper_check_file_is(func_deep_check: Callable, filetype: str,
                           filepath: Union[str, FilePath, ExtPath],
                           default_hdu: Union[str, int], action: Actions, progname) -> ExtPathAbs | None:
-    extpath = my._to_abspath(filepath, target_class=ExtPath)
-    if not extpath.hdu: extpath.extname.hdu = default_hdu
-    hdu = extpath.hdu
+    extpath = ExtPath(filepath).absolute()
+    if extpath.extname.hdu is None: extpath.extname.hdu = default_hdu
+    hdu = extpath.extname.hdu
     try:
         with fits.open(extpath) as fts:
             if isinstance(hdu, int):    # hdu argument is a number (index)
@@ -403,15 +426,8 @@ def fits_keywords_getmany(HDU, keynames: list[str], defaults: dict = None, *,
 def gti_get_limits(gtifile: ExtPath):
     """Return boundaries of the GTI interval.
 
-    Parameters
-    ----------
-    gtifile : str
-        Path to the GTI FITS file
-
-    Returns
-    -------
-    tuple
-        Returns a pair of float values
+    :param gtifile: Path to the GTI FITS file
+    :returns: a pair of float values
     """
     with fits.open(gtifile) as ftsgti:
         start=ftsgti[gtifile.hdu].data['START']

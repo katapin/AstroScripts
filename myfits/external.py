@@ -1,5 +1,5 @@
 """Provide facilities for calling external programs."""
-
+import os
 import mypython as my
 from .main import TaskError, FilePathAbs, ExtPathAbs, gti_get_limits
 
@@ -7,7 +7,8 @@ from .main import TaskError, FilePathAbs, ExtPathAbs, gti_get_limits
 class ExternalTaskError(TaskError):
     """Exception caused due to external program to raise in custom scripts."""
 
-    def __init__(self, taskname, *, custom_message=None, filename='', caller=''):
+    def __init__(self, taskname: str, *, custom_message: str = None,
+                 filename: str | os.PathLike = '', caller: str = ''):
         self.taskname = taskname
         if custom_message:
             self.msg = custom_message
@@ -16,9 +17,9 @@ class ExternalTaskError(TaskError):
             extra_info = ["{}='{}'".format(x, all_args[x]) for x in ['filename', 'caller'] if all_args[x] ]
             self.msg = f"Task '{taskname}' finished with error"
             self.msg += ' ({}).'.format(', '.join(extra_info)) if extra_info else '.'
-        self.filename=filename
+        self.filename = os.fspath(filename)
         self.caller=caller
-        super().__init__(taskname, self.msg, filename)
+        super().__init__(taskname, self.msg, self.filename)
 
 
 def callshell(cmd: str, stdin: str = '', separate_logfile: FilePathAbs = '',
@@ -47,7 +48,7 @@ def callciao(cmd: str, stdin: str = '', separate_logfile: FilePathAbs = '',
 def check_result_file_appeared(filepath: FilePathAbs, progname: str) -> None:
     if not filepath.exists():
         my.printerr(f"Something is going wrong: '{filepath}' has not been created.", progname)
-        raise my.TaskError(progname, filename=filepath)
+        raise TaskError(progname, filename=filepath)
     my.printbold(f"Saved '{filepath.name}'", progname)
 
 
@@ -63,13 +64,13 @@ def fitsimg_to_png(ftspath: FilePathAbs, imgpath: FilePathAbs = None, ds9_extra_
             "-zoom to fit -cmap bb -scale log exp 10000 -scale log {} -print destination file " 
             "-print filename {} -print -exit".format(ftspath, ds9_extra_commands, tmpimg)):
         my.printerr("Cannot call 'ds9'.", _ownname),
-        raise my.ExternalTaskError('ds9', filename=ftspath, caller=_ownname)
+        raise ExternalTaskError('ds9', filename=ftspath, caller=_ownname)
 
     if not callshell(
             "convert -density 300 {} {} -background white " 
             "-flatten -fuzz 5%% -trim {}".format(tmpimg, convert_extra_commands, imgpath)):
         my.printerr(f"Cannot call 'convert', '{imgpath.name}' is not created.", _ownname)
-        raise my.ExternalTaskError('convert', filename=imgpath.name, caller=_ownname)
+        raise ExternalTaskError('convert', filename=imgpath.name, caller=_ownname)
 
     check_result_file_appeared(imgpath, _ownname)
     return True
@@ -125,14 +126,14 @@ def xronos_plot_lcurve(
                 callftools("ftcalc '{}' '{}' ERROR ERROR*{:f} clobber=yes ".format(tmplcbkg, tmplcbkg,
                                                                                    bkgratio))):
             my.printerr("Cannot apply correction for the BACKSCALE")
-            raise my.ExternalTaskError('ftcalc', filename=lcbkg, caller=_ownname)
+            raise ExternalTaskError('ftcalc', filename=lcbkg, caller=_ownname)
         lcurves.append(add_quotes(tmplcbkg.fspath))
 
     # Convert GTI to XRONOS format
     tmpgtixron = my.TempfilePath.generate_from('tmpgti.wi')
     if not callftools(f"gti2xronwin -i '{gtitable.name}' -o '{tmpgtixron}'"):
         my.printerr("Can't convert GTI to XRONOS format")
-        raise my.ExternalTaskError('gti2xronwin', filename=lcbkg, caller=_ownname)
+        raise ExternalTaskError('gti2xronwin', filename=lcbkg, caller=_ownname)
 
     # Prepare PCO file
     tmppco = my.TempfilePath.generate_from('tmppco.pco')
@@ -155,7 +156,7 @@ def xronos_plot_lcurve(
                               int(nbin), tmppco)
     if not callftools(cmd):
         my.printerr("Can't plot the light curve")
-        raise my.ExternalTaskError('lcurve', filename=lcraw, caller=_ownname)
+        raise ExternalTaskError('lcurve', filename=lcraw, caller=_ownname)
 
     check_result_file_appeared(outepsimg, _ownname)
     return True
