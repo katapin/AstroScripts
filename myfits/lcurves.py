@@ -3,13 +3,14 @@
 import numpy as np
 from numpy import ndarray
 import scipy
+from math import factorial as fact
 from astropy.io import fits
 from astropy.time import Time
 from astropy import units
 from typing import List, Union
 from functools import singledispatchmethod
 import mypython as my
-from mypython import Actions, _to_abspath
+from mypython import Actions
 from .plot import PlotPair, PlotVector, PlotPairUplimits
 from . import main 
 from .main import ExtPath
@@ -19,88 +20,90 @@ from .main import ExtPath
 #1)Class from xmm light curve that can excrete the back ground LC from
 # BACKV and BACKE columns in NET lc-FITS.
 
+"""
+Some thoughts about rebining algorithms.
 
-#### Some thoughts about rebining algorithms
-#
-#About TIMEPIXR
-#Let's suppose timestep is 2s. If TIMEPIXR=0.5 the timestamps will's as follows
-#  | bin-1 | bin-2 | bin-3 | bin-4 | bin-5 | bin-6 | bin-7 | bin-8 |....   
-#  |   ^   |   ^   |   ^   |   ^   |   ^   |   ^   |   ^   |   ^   |
-#      0s      2s      4s      6s  |   8s  |  10s  |  12s  |  14s  |  
-#The TIMEZERO keyword in the FITS  header refers to the timstamp 0s (and not to
-#the star time of the exposure!). If we, for example, everage 4 bins, we'll obtain:
-#  |           long bin            |           long bin            |.... 
-#  |   ^           ^               |               ^               |           
-#    timezero      3s              |              11s              |
-#Now the TIMEZERO no longer refers to the bin center, but timestamps are 
-#correct and still refer the bin center. Thus, only TIMEPIXR=0.5 remain valid
-#after the rebinning
-#
-#
+About TIMEPIXR
+Let's suppose timestep is 2s. If TIMEPIXR=0.5 the timestamps will's as follows
+ | bin-1 | bin-2 | bin-3 | bin-4 | bin-5 | bin-6 | bin-7 | bin-8 |....   
+ |   ^   |   ^   |   ^   |   ^   |   ^   |   ^   |   ^   |   ^   |
+     0s      2s      4s      6s  |   8s  |  10s  |  12s  |  14s  |  
+The TIMEZERO keyword in the FITS  header refers to the timstamp 0s (and not to
+the star time of the exposure!). If we, for example, everage 4 bins, we'll obtain:
+ |           long bin            |           long bin            |.... 
+ |   ^           ^               |               ^               |           
+   timezero      3s              |              11s              |
+Now the TIMEZERO no longer refers to the bin center, but timestamps are 
+correct and still refer the bin center. Thus, only TIMEPIXR=0.5 remain valid
+after the rebinning
+
+
+###########################
+About getgroups_continous()
+Let's suppose maxgap = 1 (in units of TIMEDEL), one bin can be missed 
+
+detector in operation: |+++|+++|+++|   |+++|+++|   |   |   |+++|+++|   |   |+++|+++|+++|   |   |+++|| END
+   time              : | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 12| 13| 14| 15| 16| 17| 18|| END
+   indixes           : | 0 | 1 | 2 |   | 3 | 4 |           | 5 | 6 |       | 7 | 8 | 9 |       | 10||
+
+Data (after removing empty bins)
+array index  : 0 1 2 3 4 5  6  7  8  9  10
+time column  : 0 1 2 4 5 9  10 13 14 15 18
+time[1:]     : 1 2 4 5 9 10 13 14 15 18
+time[:-1]    : 0 1 2 4 5 9  10 13 14 15
+time diff    : 1 1 2 1 4 1  3  1  1  3
+Indices of diff>(maxgap+1)  : 4 6 9
+group0 = range(0, 4+1)  - > 0 1 2 3 4
+group1 = range(4+1, 6+1) -> 5 6
+group2 = range(6+1, 9+1) -> 7 8 9
+group3 = range(9+1, len) -> 10
+
+
 ############################
-#About getgroups_continous()
-#Let's suppose maxgap = 1 (in units of TIMEDEL), one bin can be missed 
-# 
-# detector in operation: |+++|+++|+++|   |+++|+++|   |   |   |+++|+++|   |   |+++|+++|+++|   |   |+++|| END
-#    time              : | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 12| 13| 14| 15| 16| 17| 18|| END
-#    indixes           : | 0 | 1 | 2 |   | 3 | 4 |           | 5 | 6 |       | 7 | 8 | 9 |       | 10||
-#
-#Data (after removing empty bins)
-# array index  : 0 1 2 3 4 5  6  7  8  9  10
-# time column  : 0 1 2 4 5 9  10 13 14 15 18
-# time[1:]     : 1 2 4 5 9 10 13 14 15 18
-# time[:-1]    : 0 1 2 4 5 9  10 13 14 15
-# time diff    : 1 1 2 1 4 1  3  1  1  3
-#Indices of diff>(maxgap+1)  : 4 6 9
-#group0 = range(0, 4+1)  - > 0 1 2 3 4
-#group1 = range(4+1, 6+1) -> 5 6
-#group2 = range(6+1, 9+1) -> 7 8 9
-#group3 = range(9+1, len) -> 10
-#
-#
-#############################
-#About getgroups_mincounts()
-#
-# detector in operation: |+++|+++|+++|+++|+++|+++|+++|+++|+++|   |+++|+++|+++|+++|+++|   |+++|+++|   |+++|+++|+++|+++|+++||END
-# photons arrveved     : |   | 1 |   | 2 | 2 |   | 2 |   |   |   |   |   |   |   |   |   |   | 1 |   | 1 | 1 |   |   |   ||END 
-#    time              : | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 12| 13| 14| 15| 16| 17| 18| 19| 20| 21| 22| 23||END
-#    indixes           : | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |   | 9 | 10| 11| 12| 13|   | 14| 15|   | 16| 17| 18| 19| 20||END
-# Let's add a photon far-far away (e.g. at time=1000) for algorithmic purposes
-# Cells with arrived counts > 0 
-# indices of photons : 1 3 4 6 15 16 17 21
-# timestamps         : 1 3 4 6 17 19 20 1000
-# Case 1) mincounts = 4, maxbinlength=5s  
-# Starting...
-# Set gs=0 -- index of group start, prev = -1 --- index of previous photon
-# Begin k-loop over list with photon indixes 
-# prev=-1, k=1, put photon to 'buff', because 'buff'<4 and time[k]-time[gs]+bw < maxbinlength
-# prev=1, k=3, put photons 
-# prev=3, k=4, put photons bacause before if 'buff' was still <4
-# prev=4, k=6, buf=5. Set ge=prev, group.append(range(gs,ge+1)), set buff=0,
-#   set gs=ge+1, put ptohotos to buf 
-# prev=6, k=15, buf=2, time[k]-time[gs]+bw> maxbinlength
-#   Begin loop while (time[gs] - time[k]+bw) > maxbinlength
-#     Begin reverse j-loop from k-1(=14) to gs(=5)
-#     j=14, time[14]=16, time[gs]=5, (14-5+bw)>5
-#     ....
-#     j=8, time[8]=8,  time[gs]=5, (10-8+bw)=4
-#         set ge=j, group2.append(range(gs,ge+1)), set buf=0, set gs=ge+1=9,
-#         j-loop ended
-#     Begin reverse j-loop from k-1=(14) to gs(=9)
-#     j=14, time[14]=16, time[gs]=10, (16-10+bw)>5
-#     j=13, time[14]=13, time[gs]=10, (13-10+bw)=5
-#         set ge=j, group2.append(range(gs,ge+1)), set buf=0, set gs=ge+1=14,
-#         j-loop ended
-#     while loop ended
-#   put photon at k=15 to buf, buf=1 
-# prev=15, k=16, put photon
-# prev=16, k=17, put photon
-# prev=17, k=21, its the fake photon with time[21]=1000
-#   Begin loop while (time[gs] - time[k]+bw) > maxbinlength
-#     Begin reverse j-loop from k-1(=20) to gs(=14)
-#     j=20, time[23]=24, time[gs]=16
-#     ....
-#     j=17
+About getgroups_mincounts()
+
+detector in operation: |+++|+++|+++|+++|+++|+++|+++|+++|+++|   |+++|+++|+++|+++|+++|   |+++|+++|   |+++|+++|+++|+++|+++||END
+photons arrived      : |   | 1 |   | 2 | 2 |   | 2 |   |   |   |   |   |   |   |   |   |   | 1 |   | 1 | 1 |   |   |   ||END 
+   time              : | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 12| 13| 14| 15| 16| 17| 18| 19| 20| 21| 22| 23||END
+   indexes           : | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |   | 9 | 10| 11| 12| 13|   | 14| 15|   | 16| 17| 18| 19| 20||END
+Let's add a photon far-far away (e.g. at time=1000) for algorithmic purposes
+Cells with arrived counts > 0 
+indices of photons : 1 3 4 6 15 16 17 21
+timestamps         : 1 3 4 6 17 19 20 1000
+Case 1) mincounts = 4, maxbinlength=5s  
+Starting...
+Set gs=0 -- index of group start, prev = -1 --- index of previous photon
+Begin k-loop over list with photon indexes 
+prev=-1, k=1, put photon to 'buff', because 'buff'<4 and time[k]-time[gs]+bw < maxbinlength
+prev=1, k=3, put photons 
+prev=3, k=4, put photons because before if 'buff' was still <4
+prev=4, k=6, buf=5. Set ge=prev, group.append(range(gs,ge+1)), set buff=0,
+  set gs=ge+1, put photons to buf 
+prev=6, k=15, buf=2, time[k]-time[gs]+bw> maxbinlength
+  Begin loop while (time[gs] - time[k]+bw) > maxbinlength
+    Begin reverse j-loop from k-1(=14) to gs(=5)
+    j=14, time[14]=16, time[gs]=5, (14-5+bw)>5
+    ....
+    j=8, time[8]=8,  time[gs]=5, (10-8+bw)=4
+        set ge=j, group2.append(range(gs,ge+1)), set buf=0, set gs=ge+1=9,
+        j-loop ended
+    Begin reverse j-loop from k-1=(14) to gs(=9)
+    j=14, time[14]=16, time[gs]=10, (16-10+bw)>5
+    j=13, time[14]=13, time[gs]=10, (13-10+bw)=5
+        set ge=j, group2.append(range(gs,ge+1)), set buf=0, set gs=ge+1=14,
+        j-loop ended
+    while loop ended
+  put photon at k=15 to buf, buf=1 
+prev=15, k=16, put photon
+prev=16, k=17, put photon
+prev=17, k=21, its the fake photon with time[21]=1000
+  Begin loop while (time[gs] - time[k]+bw) > maxbinlength
+    Begin reverse j-loop from k-1(=20) to gs(=14)
+    j=20, time[23]=24, time[gs]=16
+    ....
+    j=17
+    
+"""
 
 class LCError(Exception):
     """Class for errors arising during manipulation with light curves.""" 
@@ -508,7 +511,7 @@ class LCrate():
     #                         "the first one.")
                 
     def get_bkgratio(self, bkgcurve):
-        """Return ratio  of BKG to SRC collection areas."""
+        """Return ratio of BKG to SRC collection areas."""
         # self._check_curve_type(bkgcurve)
         if 'BACKSCAL' in self._keywords and 'BACKSCAL' in bkgcurve._keywords:
             return self._bkgcurve['BACKSCAL']/self._keywords['BACKSCAL']
@@ -662,8 +665,6 @@ class LCrateBinnedEven(LCrateBinned):
         # if time_keywords['TIMEPIXR']  != 0.5:  #TODO Move to rebin?
         #     raise NotImplementedError('Only TIMEPIXR=0.5 is supported yet.')
             
-
-        
     @classmethod
     def from_fits(cls, path: ExtPath, absent_keywords={}):
         """Load an evenly binned light curve from a FITS file."""
@@ -821,73 +822,60 @@ class LCcntBinnedEven(_LCcntMixin, LCrateBinnedEven):
         self._columns['rate_err'] = np.sqrt(counts)/self.binwidth
     
 
-#Set corresponding LCcnt-classes for LCrates     
+# Set corresponding LCcnt-classes for LCrates
 LCrateBinned._class_cnt = LCcntBinned    
 LCrateBinnedEven._class_cnt = LCcntBinnedEven
-    
+
+
 #### General functions
+
+
+def _bkgration_msg(bkgratio) -> None:
+    """Print warning if bkgratio < 1."""
+    if bkgratio < 1:
+        my.printwarn("The provided bkgratio=S(bkg)/S(src) < 1. Please, make sure that "
+                     "everything is correct.")
+
 
 def read(filepath):
     """Factory function to read a light curve from FITS."""
     pass
 
-def rate_uplimit(rawcnt:int, bkgcnt:float, exp:float, prob:float=0.9) ->float:
-    """Calculate upper limit to count rate.
-    
-    Calculate quantile of the count rate corresponding to the given probability.
-    Poisson distribution is assumed.
 
-    Parameters
-    ----------
-    rawcnt : int
-        Number of raw counts accumulated in the source aperture.
-    bkgcnt : float
-        Number of background counts rescaled to the source aperture.
-    exp : float
-        Exposure time.
-    prob : float, optional
-        Probability. The default is 0.9 (90% upper limit).
-
-    Returns float value.
-    """
-    return (scipy.optimize.fsolve(lambda x: scipy.stats.poisson.cdf(rawcnt, \
-                bkgcnt+x)-(1-prob), rawcnt-bkgcnt)[0])/exp
-                        
-
-def _rebin_prechecks(src, bkg, bkgratio, attrlist:list, collist:list)-> float : 
+def _rebin_prechecks(src, bkg, bkgratio: float,
+                     attrlist: list, collist: list) -> float:
     """Make checks before rebinning."""
     
     for attr in attrlist:
         if not hasattr(src, attr):
-            raise TypeError("This light curve cannot be rebined. (It doesn't have "\
+            raise TypeError("This light curve cannot be rebined. (It doesn't have the "
                             f"the '{attr}()' method.)")
     for curve in (src, bkg):
         if curve is not None:
             for col in collist:
                 if col not in curve.colnames:
-                    raise TypeError("This light curve cannot be rebined. (It doesn't have "\
+                    raise TypeError("This light curve cannot be rebined. (It doesn't have the "
                                     f"required column '{col}'.)")
     if bkg:
         if not src.check_synchronicity(bkg, silent=False):
             raise TypeError("Can't subtract a non-synchronous light curve.")
         if bkgratio is None:
             if bkgratio:= src.get_bkgratio(bkg) is None:
-                raise TypeError("Information about collection areas has not "\
-                    "been found in the lcurves' metadata. So the 'bkgratio' argument "\
+                raise TypeError(
+                    "Information about collection areas has not "
+                    "been found in the lcurves' metadata. So the 'bkgratio' argument "
                     "is mandatory.")
     else:
         bkgratio = 1
 
-    if bkgratio < 1:
-        my.printwarn("The provided bkgratio=BKG/SRC < 1. Please, make sure that "\
-                     "everything is correct.")
+    _bkgration_msg(bkgratio)
+
     return bkgratio
 
 
 def rebin(lcurve, groups, bkgcurve=None, bkgratio=None):
     pass
 
-        
 
 def rebin_mincounts(lcurve, mincounts:int, maxbinwidth:float,
                bkgcurve=None, bkgratio=None, prob=0.9):
@@ -897,10 +885,10 @@ def rebin_mincounts(lcurve, mincounts:int, maxbinwidth:float,
     
     groups = lcurve.getgroups_mincounts(mincounts, maxbinwidth)
     srclc2 = lcurve.rebin(groups)
-    rawcnt = srclc2.counts   #Count in 'raw' light curve
+    rawcnt = srclc2.counts   # Count in 'raw' light curve
     bw = srclc2.binwidth
     
-    extracols={}    #dict for constructor
+    extracols={}    # dict for constructor
     keys = srclc2.keywords
     
     if bkgcurve:
@@ -912,7 +900,7 @@ def rebin_mincounts(lcurve, mincounts:int, maxbinwidth:float,
     else:
         bkgcnt=np.zeros_like(rawcnt)
         counts = rawcnt
-    uplim = np.zeros_like(bw)      #Must be np.float!
+    uplim = np.zeros_like(bw)      # Must be np.float!
     for i in range(len(rawcnt)):
         uplim[i] = rate_uplimit(rawcnt[i], bkgcnt[i]/bkgratio, bw[i], prob)
     extracols['rate_uplimits'] = uplim
@@ -920,11 +908,9 @@ def rebin_mincounts(lcurve, mincounts:int, maxbinwidth:float,
     return LCcntBinned(srclc2.time, counts, bw, time_err=srclc2.time_err, 
                     time_keywords=srclc2.time_keywords, keywords=keys,
                     extra_columns=extracols)
-    
-        
 
 
-def plot_uplimits(lcurve, *, drop_shorter:float=0, drop_empty_shorter=0.0,
+def plot_uplimits(lcurve, *, drop_shorter: float = 0, drop_empty_shorter=0.0,
                   uplim_below=4.0, plotpair_timeopt=None, returnobj=None, 
                   print_report=True):
     
@@ -934,11 +920,11 @@ def plot_uplimits(lcurve, *, drop_shorter:float=0, drop_empty_shorter=0.0,
     uplim = lcurve.columns['rate_uplimits']
     nbins = len(cnt)
     
-    #Two masks to extract normal rates and uplimits
+    # Two masks to extract normal rates and uplimits
     mask1, mask2 = [False]*nbins, [False]*nbins
     counters={k:0 for k in ['empty', 'drop_empty', 'drop_short','uplim', 'normal']}
     for i in range(nbins):
-        if  cnt[i] == 0:   #Empty bin
+        if  cnt[i] == 0:   # Empty bin
             counters['empty'] +=1
             if bw[i] <= drop_empty_shorter:
                 counters['drop_empty'] +=1
@@ -967,7 +953,6 @@ def plot_uplimits(lcurve, *, drop_shorter:float=0, drop_empty_shorter=0.0,
         print("  Empty: {:d}".format(counters['drop_empty']))
         print("  Short: {:d}".format(counters['drop_short']))
         
-    
     if returnobj == 'lcurves':
         return {'rates':lcrt, 'uplimits':lcul}
     
@@ -990,126 +975,125 @@ def plot_uplimits(lcurve, *, drop_shorter:float=0, drop_empty_shorter=0.0,
 
 #### legacy #################### 
 
-
-def _basic_checks(hdu, *, action=Actions.EXCEPTION, refkeys=None):
-    """Check the presence of the mandatory keywords for evenly binned light curve."""
-    res={}
-    for key in ('TIMEPIXR', 'TIMEDEL', 'TIMEZERO'): 
-        if key not in hdu.header:
-            my._do_action(action, f"Mandatory keyword f'{key}' is not found.",
-                exception_class=KeyError)
-        res[key] = hdu.header[key]
-        
-    return res
-
-
+#
+# def _basic_checks(hdu, *, action=Actions.EXCEPTION, refkeys=None):
+#     """Check the presence of the mandatory keywords for evenly binned light curve."""
+#     res={}
+#     for key in ('TIMEPIXR', 'TIMEDEL', 'TIMEZERO'):
+#         if key not in hdu.header:
+#             my._do_action(action, f"Mandatory keyword f'{key}' is not found.",
+#                 exception_class=KeyError)
+#         res[key] = hdu.header[key]
+#
+#     return res
 
 
-def rebin_continues_intervals(objfile:str, bkgfile:str=None, *, bkgscale:float=None):
-    """Rebin light curve to have one point per each countinuos interval.
-
-    Parameters
-    ----------
-    objfile : str
-        Path to the source light curve FITS file.
-    bkgfile : str, optional
-        Path to the background light curve FITS file. The default is None
-    bkgscale : float, optional
-        Background correction factor, i.e. the ratio of areas of the source
-        and background apertures. The default is None.
-
-    Returns
-    -------
-    None.
-
-    """
-
-    
-    with fits.open(objfile) as objfts:
-        keywords=_make_checks(objfile)
-        if keywords['TIMEPIXR']  != 0.5:  ##TODOMove to make_checks
-            raise NotImplementedError('Only TIMEPIXR=0.5 is supported yet.')
-        step = keywords['TIMEDEL']
-        time=objfts[1].data['Time']
-        rate=objfts[1].data['Rate'] 
-        err=objfts[1].data['Error']  
-        
-    if bkgfile:
-        if bkgscale is None:
-            raise TypeError("'bkgfile' argument requires the 'bkgscale' but it is None.")
-        with fits.open(bkgfile) as bkgfts:
-            b_keywords=_make_checks(objfile)
-            for key in keywords:  ## TODO Move this loop to _make_checks refkeys
-                if keywords[key] != b_keywords[key]:
-                    raise ValueError("The background light curve keyword has "
-                        f"different value of the '{key}' keyword.")
-            b_rate=bkgfts[1].data['Rate'] 
-            b_err=bkgfts[1].data['Error']  
-      
-    groups_raw = _make_groups(time, step)
-    groups=[]
-    for gr in groups_raw:
-      if len(gr)>1:
-        groups.append(gr)   
-    
-    l=len(groups)
-    x=np.zeros(l)
-    ex=np.zeros(l)
-    yraw=np.zeros(l)
-    eyraw=np.zeros(l)
-    ynet=np.zeros(l)
-    eynet=np.zeros(l)
-    ybkg=np.zeros(l)
-    eybkg=np.zeros(l)
-    i=0
-    for i in range(l):
-        gr=groups[i]
-      
-        # print('%d:' % i)
-        # print(gr)
-      
-        # if i==0: print(time[gr])
-        x1=time[gr[0]]
-        x2=time[gr[-1]] 
-        x[i]=0.5*(x1+x2)
-        ex[i]=0.5*(x2-x1+step)       #  0.5* ( x2+0.5*STEP - (x1-0.5*STEP) )
-        yraw[i]=np.mean(rate[gr])
-        ybkg[i]=np.mean(b_rate[gr])*bkgscale
-        eyraw[i]=np.sqrt(np.sum( np.power(err[gr],2) ))/len(gr)   # 1/n * sqrt ( s1^2 + s2^2 + ... sn^2 )
-        eybkg[i]=np.sqrt(np.sum( np.power(b_err[gr],2) ))/len(gr)*bkgscale
-        i+=1
-        
-    ynet=yraw-ybkg
-    eynet=np.sqrt(eyraw**2+eybkg**2) 
-    
-    i_min=np.argmin(ynet)
-    i_max=np.argmax(ynet)
-    print(ynet[i_min],ynet[i_max])
-    print('Min={:2.3f} at {:e} ({:d} points), Max={:2.3f} at {:e} ({:d} points)'.format(np.amin(ynet),x[i_min],len(groups[i_min]),np.amax(ynet),x[i_max],len(groups[i_max])))
-    
-    res={}
-    for var in ['x','ex','yraw','ybkg','ynet','eyraw','eybkg','eynet']:
-      res[var]=locals()[var]
-    return res
-      
-def rebin_smart(objfile:str, mincounts:int, maxbinlength:float):
-    from math import sqrt
-    with fits.open(objfile) as objfts:
-        keywords=_basic_checks(objfts[1])
-        step = keywords['TIMEDEL']
-        time  = objfts[1].data['Time']
-        rate  = objfts[1].data['Rate'] 
-        frexp = objfts[1].data['Fracexp'] 
-
-    newlc=[]
-    binwidth = buf = t1 = t2 = 0
-
-        
-        
-    res={}
-    res['x']= np.array([pt['time'] for pt in newlc])
-    res['yraw']= np.array([pt['rate'] for pt in newlc])
-    res['eyraw']= np.array([pt['error'] for pt in newlc])
-    return res
-        
-        
+#
+# def rebin_continues_intervals(objfile:str, bkgfile:str=None, *, bkgscale:float=None):
+#     """Rebin light curve to have one point per each countinuos interval.
+#
+#     Parameters
+#     ----------
+#     objfile : str
+#         Path to the source light curve FITS file.
+#     bkgfile : str, optional
+#         Path to the background light curve FITS file. The default is None
+#     bkgscale : float, optional
+#         Background correction factor, i.e. the ratio of areas of the source
+#         and background apertures. The default is None.
+#
+#     Returns
+#     -------
+#     None.
+#
+#     """
+#
+#
+#     with fits.open(objfile) as objfts:
+#         keywords=_make_checks(objfile)
+#         if keywords['TIMEPIXR']  != 0.5:  ##TODOMove to make_checks
+#             raise NotImplementedError('Only TIMEPIXR=0.5 is supported yet.')
+#         step = keywords['TIMEDEL']
+#         time=objfts[1].data['Time']
+#         rate=objfts[1].data['Rate']
+#         err=objfts[1].data['Error']
+#
+#     if bkgfile:
+#         if bkgscale is None:
+#             raise TypeError("'bkgfile' argument requires the 'bkgscale' but it is None.")
+#         with fits.open(bkgfile) as bkgfts:
+#             b_keywords=_make_checks(objfile)
+#             for key in keywords:  ## TODO Move this loop to _make_checks refkeys
+#                 if keywords[key] != b_keywords[key]:
+#                     raise ValueError("The background light curve keyword has "
+#                         f"different value of the '{key}' keyword.")
+#             b_rate=bkgfts[1].data['Rate']
+#             b_err=bkgfts[1].data['Error']
+#
+#     groups_raw = _make_groups(time, step)
+#     groups=[]
+#     for gr in groups_raw:
+#       if len(gr)>1:
+#         groups.append(gr)
+#
+#     l=len(groups)
+#     x=np.zeros(l)
+#     ex=np.zeros(l)
+#     yraw=np.zeros(l)
+#     eyraw=np.zeros(l)
+#     ynet=np.zeros(l)
+#     eynet=np.zeros(l)
+#     ybkg=np.zeros(l)
+#     eybkg=np.zeros(l)
+#     i=0
+#     for i in range(l):
+#         gr=groups[i]
+#
+#         # print('%d:' % i)
+#         # print(gr)
+#
+#         # if i==0: print(time[gr])
+#         x1=time[gr[0]]
+#         x2=time[gr[-1]]
+#         x[i]=0.5*(x1+x2)
+#         ex[i]=0.5*(x2-x1+step)       #  0.5* ( x2+0.5*STEP - (x1-0.5*STEP) )
+#         yraw[i]=np.mean(rate[gr])
+#         ybkg[i]=np.mean(b_rate[gr])*bkgscale
+#         eyraw[i]=np.sqrt(np.sum( np.power(err[gr],2) ))/len(gr)   # 1/n * sqrt ( s1^2 + s2^2 + ... sn^2 )
+#         eybkg[i]=np.sqrt(np.sum( np.power(b_err[gr],2) ))/len(gr)*bkgscale
+#         i+=1
+#
+#     ynet=yraw-ybkg
+#     eynet=np.sqrt(eyraw**2+eybkg**2)
+#
+#     i_min=np.argmin(ynet)
+#     i_max=np.argmax(ynet)
+#     print(ynet[i_min],ynet[i_max])
+#     print('Min={:2.3f} at {:e} ({:d} points), Max={:2.3f} at {:e} ({:d} points)'.format(np.amin(ynet),x[i_min],len(groups[i_min]),np.amax(ynet),x[i_max],len(groups[i_max])))
+#
+#     res={}
+#     for var in ['x','ex','yraw','ybkg','ynet','eyraw','eybkg','eynet']:
+#       res[var]=locals()[var]
+#     return res
+#
+# def rebin_smart(objfile:str, mincounts:int, maxbinlength:float):
+#     from math import sqrt
+#     with fits.open(objfile) as objfts:
+#         keywords=_basic_checks(objfts[1])
+#         step = keywords['TIMEDEL']
+#         time  = objfts[1].data['Time']
+#         rate  = objfts[1].data['Rate']
+#         frexp = objfts[1].data['Fracexp']
+#
+#     newlc=[]
+#     binwidth = buf = t1 = t2 = 0
+#
+#
+#
+#     res={}
+#     res['x']= np.array([pt['time'] for pt in newlc])
+#     res['yraw']= np.array([pt['rate'] for pt in newlc])
+#     res['eyraw']= np.array([pt['error'] for pt in newlc])
+#     return res
+#
+#
