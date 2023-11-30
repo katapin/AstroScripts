@@ -1,7 +1,8 @@
 #!/bin/sh
 #############################################################
 #
-#Calculate exposure map for SWIFT data
+#Download chandra observations in conditions of a poor
+#internet connection 
 #
 #############################################################
 
@@ -11,13 +12,13 @@ SCRIPTNAME=chandra_proper_download
 
 die()
 {
-	echo "Error: $1";
-	exit 1;
+  echo "Error: $1";
+  exit 1;
 }
 
 showhelp()
 {
-	echo "Usage: [-t num] $SCRIPTNAME ObsID1 ObsID2 ...
+  echo "Usage: [-t num] $SCRIPTNAME ObsID1 ObsID2 ...
 Download Chandra ObsIDs with assigned number of retries
  
   -h           display this help and exit
