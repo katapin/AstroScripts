@@ -1,0 +1,3 @@
+[submodule "python-packages/MyPythonLib"]
+	path = python-packages/mypythonlib
+	url = https://github.com/katapin/MyPythonLib.git
