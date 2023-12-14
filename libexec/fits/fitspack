@@ -1,0 +1,54 @@
+#/bin/sh
+#Compress a file with the chosen archiver (default is 'gzip') if
+#the file is FITS. It's convenient to use this script with 'find':
+#find . -name '*' -exec fitspack {} \;
+
+
+print_usage() {
+echo Usage:
+echo "   fitspack -t [ARCHIVER] -o [OPTIONS] FILE"
+exit 0
+}
+
+EXEC="gzip"
+OPTS_DEFAULT=( "-v9" )
+OPTS=()
+
+set -o errexit 
+param=$(getopt -u -o "hut:o:" --longoptions "help,usage,type:,opt:" -n $(basename $0) --  $@)
+set -- $param
+
+while :
+do 
+    case ${1} in
+        -h | -u | --usage | --help)
+            print_usage
+            ;;
+        -t | --type)
+            shift
+            EXEC=${1}
+            shift
+            ;;
+        -o | --opt)
+            shift
+            OPTS+=($1)
+            shift
+            ;;
+        --)
+            set $@
+            break
+            ;;
+    esac
+done
+
+
+[ $# -ne 1 ] && { echo "Error: exactly one argument required: filpath."; exit 1; }
+$(file $1 | grep "FITS" >/dev/null)    # return $1 and auto exit if it's not a FITS
+$($EXEC -V &>/dev/null ) || { echo "Error: Can't fine executable for '$EXEC'"; exit 1; }
+
+if [ "$EXEC" == "gzip"  -a  ${#OPTS[@]} -eq 0 ] 
+then
+    OPTS=$OPTS_DEFAULT
+fi
+
+$EXEC $OPTS $@ 
