@@ -17,13 +17,15 @@ enabled = true
 
 [tool.setuptools]
 #package-dir = {"" = "python-packages"}
-include-package-data = true
-packages = ["astroscripts", "astroscripts._internal"]
+#packages = ["astroscripts", "astroscripts._internal"]
+packages = ["astroscripts"]
 
 [project.scripts]
 astroscripts = 'astroscripts._internal.scripts:init'
 
-
 [tool.setuptools.package-data]
-_internal.libexec.xmm= ["*.py"]
+"astroscripts._internal" = ["**"]
+
+[tool.setuptools.exclude-package-data]
+"astroscripts" = ["*.pyc"]
 
