@@ -4,8 +4,8 @@ import os, re, copy
 from typing import Union, Self, Callable, Type
 from pathlib import PurePath
 from astropy.io import fits
-import mypython as my
-from mypython import Actions, FilePath, FilePathAbs
+import mypythonlib as my
+from mypythonlib import Actions, FilePath, FilePathAbs
 
 
 class TaskError(Exception):
