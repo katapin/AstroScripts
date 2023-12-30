@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools", "setuptools-git-versioning"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "astroscripts"
+dynamic = ["version"]
+dependencies = [
+    'numpy',
+    'scipy',
+    'astropy',
+    'mypythonlib @ git+https://github.com/katapin/MyPythonLib.git'
+]
+
+[tool.setuptools-git-versioning]
+enabled = true
+
+[tool.setuptools]
+package-dir = {"" = "python-packages"}
