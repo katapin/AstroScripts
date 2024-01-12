@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from typing import Union
 from collections.abc import Iterable
 from functools import singledispatch, singledispatchmethod
-from mypython import printwarn
+from mypythonlib import printwarn
 from .main import FilePathAbs
 from .external import check_result_file_appeared
 

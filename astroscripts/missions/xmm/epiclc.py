@@ -5,12 +5,15 @@
 
 import sys, os
 from typing import Self
-import myfits as my
-from myfits import FilePath, FilePathAbs, ExtPathAbs, Actions
-from myfits.external import xronos_plot_lcurve
-import xmmgeneral as xmm
-from astropy.io import fits
 from dataclasses import dataclass, asdict
+from astropy.io import fits
+
+import mypythonlib as mylib
+from mypythonlib import FilePath, FilePathAbs
+from astroscripts.external import xronos_plot_lcurve
+from astroscripts import ExtPathAbs, TaskError, gti_get_limits, fits_check_file_is_gti
+import astroscripts.missions.xmm.common as xmm
+from astroscripts.missions.xmm.common import EVTinfo
 
 
 @dataclass
@@ -20,8 +23,8 @@ class ProdNames:
     raw: str           # Raw object light curve
     bkg: str           # Background spectrum
     net: str           # Background subtracted object light curve
-    evt: str  = None   # EVT-file with only the events that used in light curve
-    img: str  = None   # Quick-look image
+    evt: str = None   # EVT-file with only the events that used in light curve
+    img: str = None   # Quick-look image
 
     @classmethod
     def generate(cls, nroot: str, timebin: float, mine: float, maxe: float) -> Self:
@@ -51,7 +54,7 @@ class ProdNames:
 
 
 def xmmlc_extract_single(
-        evtinfo:xmm.EVTinfo, gtifile: ExtPathAbs, regfile: FilePathAbs,
+        evtinfo: xmm.EVTinfo, gtifile: ExtPathAbs, regfile: FilePathAbs,
         lcfile: FilePathAbs, timebin: float, channels: tuple,
         evtlc: FilePathAbs = None) -> bool:
     """Extract single light from the EVT-file.
@@ -68,21 +71,21 @@ def xmmlc_extract_single(
     :returns: Returns True if no errors arose.
     """
     _no_errors=True
-    _ownname=my.getownname()
+    _ownname=mylib.getownname()
     evtname, evtpath = evtinfo.filepath.name, evtinfo.filepath.fspath
     
     if evtinfo.datamode!='IMAGING':
-        my.printerr("'{}' was taken in the '{}' mode. Only 'IMAGING' is " 
+        mylib.printerr("'{}' was taken in the '{}' mode. Only 'IMAGING' is " 
                     "datamode supported yet.".format(evtname, evtinfo.datamode))
         raise NotImplementedError(f'{evtinfo.datamode} mode is not supported yet.')
         
     region_expression = xmm.xmm_read_regfile(regfile)
     if not region_expression:
-        my.printerr(f"Empty region file '{regfile}' or unsupported format. Only "
+        mylib.printerr(f"Empty region file '{regfile}' or unsupported format. Only "
                     "ds9 region format is supported.")
-        raise my.TaskError(_ownname, lcfile)
+        raise TaskError(_ownname, lcfile)
         
-    gtilimits=my.gti_get_limits(gtifile) 
+    gtilimits=gti_get_limits(gtifile)
     expression='(({}) && gti({},TIME) && PI in [{:d}:{:d}])'.format(region_expression,
             gtifile, *channels) 
     
@@ -96,20 +99,20 @@ def xmmlc_extract_single(
     if evtlc:
         cmd += f" keepfilteroutput=yes withfilteredset=yes filteredset='{evtlc}'"
     
-    xmm.__call_and_check_result(cmd, lcfile, 'extracting a light curve',
+    xmm._call_and_check_result(cmd, lcfile, 'extracting a light curve',
                                 'evselect', _ownname)
     
     # Make test images
     testimgpng=lcfile.with_stem_starting('tmpimg_').with_suffix('.png')
     
-    if not xmm.__make_test_images(evtinfo.filepath, testimgpng, expression, progname=_ownname):
+    if not xmm._make_test_images(evtinfo.filepath, testimgpng, expression, progname=_ownname):
         _no_errors=False
 
     return _no_errors
 
 
 def xmmlc_make_products(
-        evtinfo: xmm.EVTinfo, gtifile: ExtPathAbs, objreg: FilePathAbs,
+        evtinfo: EVTinfo, gtifile: ExtPathAbs, objreg: FilePathAbs,
         bkgreg: FilePathAbs, prod_names: ProdNames, timebin: float = None,
         channels: tuple = None, with_evtlc: bool = False, plotlc: bool = True) -> bool:
     """Extract a triple of light curves.
@@ -134,18 +137,18 @@ def xmmlc_make_products(
     :returns: True if no errors arose.
     """
     _no_errors=True
-    _ownname=my.getownname()
+    _ownname=mylib.getownname()
     evtname=evtinfo.filepath.name
     if not hasattr(prod_names, 'abs'): prod_names.make_abspaths()
 
     # Determine timebin and channels
     if not timebin:
         timebin = max(evtinfo.frmtime.values())
-        my.printwarn("'timebin' for {} is set to {}".format(evtinfo.instr_short_name, timebin))
+        mylib.printwarn("'timebin' for {} is set to {}".format(evtinfo.instr_short_name, timebin))
         
     if not channels:
         channels = (200, 12000)
-        my.printwarn("'channels' for {} is set to ({}, {})".format(evtinfo.instr_short_name, *channels))
+        mylib.printwarn("'channels' for {} is set to ({}, {})".format(evtinfo.instr_short_name, *channels))
         
     if with_evtlc:
         if not prod_names.evt:
@@ -155,25 +158,25 @@ def xmmlc_make_products(
     else:
         evtlc=None
         
-    my.printgreen(f"Extracting the raw light curve '{evtname}' -> '{prod_names.raw}'")
+    mylib.printgreen(f"Extracting the raw light curve '{evtname}' -> '{prod_names.raw}'")
     if not xmmlc_extract_single(evtinfo, gtifile, objreg, prod_names.abs['raw'],
                                 timebin, channels, evtlc):
-        my.printwarn("Some minor errors arose during extraction of the raw light curve. "
+        mylib.printwarn("Some minor errors arose during extraction of the raw light curve. "
                      "Check the result carefully.")
         _no_errors=False
         
-    my.printgreen(f"Extracting the background light curve '{evtname}' -> '{prod_names.bkg}'")
+    mylib.printgreen(f"Extracting the background light curve '{evtname}' -> '{prod_names.bkg}'")
     if not xmmlc_extract_single(evtinfo, gtifile, bkgreg, prod_names.abs['bkg'],
                                 timebin, channels, None):
-        my.printwarn("Some minor errors arose during extraction of the background light curve. "
+        mylib.printwarn("Some minor errors arose during extraction of the background light curve. "
                      "Check the result carefully.")
         _no_errors=False
     
-    my.printgreen("Producing the net light curve ('{0.raw}' - '{0.bkg}') -> '{0.net}'".format(prod_names))
+    mylib.printgreen("Producing the net light curve ('{0.raw}' - '{0.bkg}') -> '{0.net}'".format(prod_names))
     cmd="epiclccorr srctslist='{raw}' eventlist='{mainevt}' outset='{net}' "\
         "withbkgset=yes bkgtslist='{bkg}' applyabsolutecorrections=yes".\
         format(mainevt=evtinfo.filepath.fspath, **prod_names.abs)
-    xmm.__call_and_check_result(cmd, prod_names.abs['net'], 'background subtraction',
+    mylib.common._call_and_check_result(cmd, prod_names.abs['net'], 'background subtraction',
                                'epiclccorr', _ownname)
     
     # Plot light curves
@@ -184,12 +187,12 @@ def xmmlc_make_products(
         lcnet_header = fits.getheader(prod_names.net, 1)
         bkgratio=lcnet_header['BKGRATIO']
         if bkgratio>1: bkgratio=1/bkgratio   # TODO this can't be right
-        my.printgreen(f"Making preview image of the light curves: '{prod_names.img}'")
+        mylib.printgreen(f"Making preview image of the light curves: '{prod_names.img}'")
         try:
             xronos_plot_lcurve(prod_names.abs['raw'], gtifile, prod_names.abs['img'],
                                prod_names.abs['bkg'], bkgratio, prod_names.abs['net'])
         except UnicodeError:
-            my.printerr("Can't plot the light curve.")
+            mylib.printerr("Can't plot the light curve.")
             _no_errors=False
             
     return _no_errors
@@ -201,23 +204,23 @@ def xmmlc_combine(lc1: FilePathAbs, lc2: FilePathAbs, reslc: FilePathAbs):
     The lcmath task is used. So the resultant light curve will be a bin-to-bin
     sum of the two commands. Arguments are paths of the input ant output files.
     """
-    _ownname=my.getownname()
+    _ownname=mylib.getownname()
     cmd=f"lcmath '{lc1}' '{lc2}' {reslc} 1 1 addsubr=yes"
-    xmm.__call_and_check_result(cmd, reslc, 'merging of the light curves', 'lcmath', _ownname)
+    xmm._call_and_check_result(cmd, reslc, 'merging of the light curves', 'lcmath', _ownname)
     
     
 def _checks_for_xmmlc_make_products(prod_names:ProdNames, clobber):
     prod_names.make_abspaths()
     for ftype, fname in prod_names.abs.items():
         if ftype in ['raw', 'net']:  # These are important files, warn!
-            my.check_file_not_exist_or_remove(
-                fname, override=clobber, action=Actions.DIE,
+            mylib.check_file_not_exist_or_remove(
+                fname, override=clobber, action=mylib.Actions.DIE,
                 extra_text='Use option --clobber to override it or use --suffix.', 
                 remove_warning=True)
         else:  # These are not important files, we can remove it
-            my.check_file_not_exist_or_remove(
+            mylib.check_file_not_exist_or_remove(
                 fname, override=True,
-                action=Actions.WARNING, remove_warning=(not clobber))
+                action=mylib.Actions.WARNING, remove_warning=(not clobber))
 
 
 def _main():
@@ -269,17 +272,17 @@ def _main():
         
     # Check the system variables
     if ("SAS_ODF" not in os.environ) or ("SAS_ODF" not in os.environ):
-        my.die("'SAS_ODF' and 'SAS_CCF' variables are not defined. Please "
+        mylib.die("'SAS_ODF' and 'SAS_CCF' variables are not defined. Please "
                "define the variables and try again.")
     
     # Check length of lists
     if not ( len(arg_evtfiles) == len(arg_regobjfiles)== len(arg_regbkgfiles) ):
-        my.die("Lists of the EVENT and the region files must have the same "
+        mylib.die("Lists of the EVENT and the region files must have the same "
                "length and order.")
     nfiles=len(arg_evtfiles)
     
     if nfiles>3:
-        my.die("You are trying to combine more then 3 light curves. Only "
+        mylib.die("You are trying to combine more then 3 light curves. Only "
                "synchronous light curves from EPIC-PN, EPIC-MOS1 and EPIC-MOS2 "
                "can be combined.")
         
@@ -287,35 +290,35 @@ def _main():
     regobjdict={}
     regbkgdict={}
     for i, strevtfile in enumerate(arg_evtfiles):  # Check each EVT file
-        evtinfo=xmm.EVTinfo(xmm.xmm_check_file_is_evt(strevtfile))
+        evtinfo=EVTinfo(xmm.xmm_check_file_is_evt(strevtfile))
         instr=evtinfo.instr_short_name
         if instr in evtdict:        # Check for duplicates
-            my.die("You are trying to extract and combine light curves from the same "
+            mylib.die("You are trying to extract and combine light curves from the same "
                    "detector. Can't combine them.")
         evtdict[instr] = evtinfo   # And add to a dict
-        regobjdict[instr] = my.check_file_exists(arg_regobjfiles[i])
-        regbkgdict[instr] = my.check_file_exists(arg_regbkgfiles[i])
+        regobjdict[instr] = mylib.check_file_exists(arg_regobjfiles[i])
+        regbkgdict[instr] = mylib.check_file_exists(arg_regbkgfiles[i])
         
     # Check GTI file exists
-    gtifile=my.fits_check_file_is_gti(arg_gtifile)
+    gtifile=fits_check_file_is_gti(arg_gtifile)
 
     # Check energy range
     if mine<0.2 or mine>12:
-        my.die("'mine' argument must be in the 0.2-12.0 keV range")
+        mylib.die("'mine' argument must be in the 0.2-12.0 keV range")
     if maxe<0.2 or maxe>12:
-        my.die("'maxe' argument must be in the 0.2-12.0 keV range")
+        mylib.die("'maxe' argument must be in the 0.2-12.0 keV range")
     if mine>maxe:
-        my.die("'mine' must be less than 'maxe'")
+        mylib.die("'mine' must be less than 'maxe'")
     
     channels=(int(mine*1000), int(maxe*1000))
     
     if logfile:
-        my.logger_turn_on(my.FilePath(logfile).absolute())
+        mylib.logger_turn_on(FilePath(logfile).absolute())
     
     _no_error=True
     if nfiles>1:  # Lcurves wil be combined
         if not timebin:
-            my.die("If you want to combine the light curves, you must "
+            mylib.die("If you want to combine the light curves, you must "
                    "explicitly specify the 'timebin' argument.")
             
         prodnames_dict={}
@@ -326,18 +329,18 @@ def _main():
             
         # Trick to generate name of the combined net LC
         comb_nroot='{}_{}'.format(sufx, ''.join(sorted(evtdict)))  # Nameroot for combined lc
-        _kwargs_check = dict(override=argnspace.clobber, action=Actions.DIE,
+        _kwargs_check = dict(override=argnspace.clobber, action=mylib.Actions.DIE,
         extra_text='Use option --clobber to override it or use --suffix.', remove_warning=True)
-        lc_combined = my.check_file_not_exist_or_remove(
+        lc_combined = mylib.check_file_not_exist_or_remove(
             ProdNames.generate(comb_nroot, **_kwargs_generate).net,
             **_kwargs_check)  # this is pnmos1mos2 if nfiles==3
         if nfiles == 3:
-            lc_mos_combined = my.check_file_not_exist_or_remove(
+            lc_mos_combined = mylib.check_file_not_exist_or_remove(
                 ProdNames.generate(f'{sufx}_mos1mos2', **_kwargs_generate).net,
                 **_kwargs_check)   # this is mos1mos2
 
         #### Do the main job
-        my.printcaption(f"Making '{lc_combined.name}'...")
+        mylib.printcaption(f"Making '{lc_combined.name}'...")
         for instr in evtdict:  # Make light curves for each instrument
             if not xmmlc_make_products(
                     evtdict[instr], gtifile, regobjdict[instr],
@@ -355,24 +358,18 @@ def _main():
         instr, evtinfo = evtdict.popitem()
         if not timebin:
             timebin = max(evtinfo.frmtime.values())
-            my.printwarn("'timebin' for {} is set to {}".format(instr, timebin))
+            mylib.printwarn("'timebin' for {} is set to {}".format(instr, timebin))
         prodnames = ProdNames.generate(f'{sufx}_{instr}', timebin, mine, maxe)
         _checks_for_xmmlc_make_products(prodnames, argnspace.clobber)
 
-        my.printcaption(f"Making '{prodnames.net}'...")
+        mylib.printcaption(f"Making '{prodnames.net}'...")
         if not xmmlc_make_products(
-                evtinfo, gtifile, my.check_file_exists(arg_regobjfiles[0]),
-                my.check_file_exists(arg_regbkgfiles[0]), prodnames, timebin,
+                evtinfo, gtifile, mylib.check_file_exists(arg_regobjfiles[0]),
+                mylib.check_file_exists(arg_regbkgfiles[0]), prodnames, timebin,
                 channels, with_evtlc=argnspace.with_evtlc):
             _no_error=False
             
-    my.printcaption("Finished")
+    mylib.printcaption("Finished")
     if not _no_error:
-        my.printwarn("Some minor errors arose. Check the result carefully.")
+        mylib.printwarn("Some minor errors arose. Check the result carefully.")
             
-            
-if __name__ == '__main__':        
-    try:
-        _main()
-    except Exception as ex:
-        my.die(str(ex))

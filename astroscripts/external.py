@@ -1,6 +1,6 @@
 """Provide facilities for calling external programs."""
 import os
-import mypython as my
+import mypythonlib as mylib
 from .main import TaskError, FilePathAbs, ExtPathAbs, gti_get_limits
 
 
@@ -25,51 +25,51 @@ class ExternalTaskError(TaskError):
 def callshell(cmd: str, stdin: str = '', separate_logfile: FilePathAbs = '',
               return_code: bool = False) -> bool | tuple[bool, int]:
     """Call shell program, pass input and log result."""
-    return my.callandlog(cmd, stdin=stdin, separate_logfile=separate_logfile,
-                         return_code=return_code, progname='callshell')
+    return mylib.callandlog(cmd, stdin=stdin, separate_logfile=separate_logfile,
+                            return_code=return_code, progname='callshell')
 
 
 def callftools(cmd: str, stdin: str = '', separate_logfile: FilePathAbs = '',
                return_code: bool = False) -> bool | tuple[bool, int]:
     """Call ftools program, pass input and log result."""
-    return my.callandlog(cmd, stdin=stdin, separate_logfile=separate_logfile,
-                         extra_start='source ~/.bashrc \nheainit\n',
-                         return_code=return_code, progname='callftools')
+    return mylib.callandlog(cmd, stdin=stdin, separate_logfile=separate_logfile,
+                            extra_start='source ~/.bashrc \nheainit\n',
+                            return_code=return_code, progname='callftools')
 
 
 def callciao(cmd: str, stdin: str = '', separate_logfile: FilePathAbs = '',
              return_code: bool = False) -> bool | tuple[bool, int]:
     """Call Chandra ciao program, pass input and log result."""
-    return my.callandlog(cmd, stdin=stdin, separate_logfile=separate_logfile,
-                         extra_start='source ~/.bashrc \nciaoinit >/dev/null\n',
-                         return_code=return_code,  progname='callciao')
+    return mylib.callandlog(cmd, stdin=stdin, separate_logfile=separate_logfile,
+                            extra_start='source ~/.bashrc \nciaoinit >/dev/null\n',
+                            return_code=return_code, progname='callciao')
 
 
 def check_result_file_appeared(filepath: FilePathAbs, progname: str) -> None:
     if not filepath.exists():
-        my.printerr(f"Something is going wrong: '{filepath}' has not been created.", progname)
+        mylib.printerr(f"Something is going wrong: '{filepath}' has not been created.", progname)
         raise TaskError(progname, filename=filepath)
-    my.printbold(f"Saved '{filepath.name}'", progname)
+    mylib.printbold(f"Saved '{filepath.name}'", progname)
 
 
 def fitsimg_to_png(ftspath: FilePathAbs, imgpath: FilePathAbs = None, ds9_extra_commands: str = '',
                    convert_extra_commands: str = '') -> bool:
     """Convert FITS image to png with ds9."""
-    _ownname = my.getownname()
-    tmpimg = my.TempfilePath.generate('.ps')
+    _ownname = mylib.getownname()
+    tmpimg = mylib.TempfilePath.generate('.ps')
     if imgpath is None: imgpath = ftspath.with_suffix('png')
 
     if not callshell(
             "ds9 {} -nopanner -nomagnifier -noinfo -colorbar no -view buttons no -geometry 1360x768 " 
             "-zoom to fit -cmap bb -scale log exp 10000 -scale log {} -print destination file " 
             "-print filename {} -print -exit".format(ftspath, ds9_extra_commands, tmpimg)):
-        my.printerr("Cannot call 'ds9'.", _ownname),
+        mylib.printerr("Cannot call 'ds9'.", _ownname),
         raise ExternalTaskError('ds9', filename=ftspath, caller=_ownname)
 
     if not callshell(
             "convert -density 300 {} {} -background white " 
             "-flatten -fuzz 5%% -trim {}".format(tmpimg, convert_extra_commands, imgpath)):
-        my.printerr(f"Cannot call 'convert', '{imgpath.name}' is not created.", _ownname)
+        mylib.printerr(f"Cannot call 'convert', '{imgpath.name}' is not created.", _ownname)
         raise ExternalTaskError('convert', filename=imgpath.name, caller=_ownname)
 
     check_result_file_appeared(imgpath, _ownname)
@@ -107,7 +107,7 @@ def xronos_plot_lcurve(
         Return True.
 
     """
-    _ownname = my.getownname()
+    _ownname = mylib.getownname()
     add_quotes = lambda s: "'" + s + "'"
 
     gtilimits = gti_get_limits(gtitable)
@@ -120,23 +120,23 @@ def xronos_plot_lcurve(
     if lcbkg:
         if not bkgratio:
             raise TypeError("Argument 'lcbkg' requires 'bkgratio' but None is given.")
-        my.printbold(f'BKGRATIO={bkgratio}')
-        tmplcbkg = my.TempfilePath.generate_from('lcbkg.fts')
+        mylib.printbold(f'BKGRATIO={bkgratio}')
+        tmplcbkg = mylib.TempfilePath.generate_from('lcbkg.fts')
         if not (callftools("ftcalc '{}' '{}' RATE RATE*{:f}".format(lcbkg, tmplcbkg, bkgratio)) or
                 callftools("ftcalc '{}' '{}' ERROR ERROR*{:f} clobber=yes ".format(tmplcbkg, tmplcbkg,
                                                                                    bkgratio))):
-            my.printerr("Cannot apply correction for the BACKSCALE")
+            mylib.printerr("Cannot apply correction for the BACKSCALE")
             raise ExternalTaskError('ftcalc', filename=lcbkg, caller=_ownname)
         lcurves.append(add_quotes(tmplcbkg.fspath))
 
     # Convert GTI to XRONOS format
-    tmpgtixron = my.TempfilePath.generate_from('tmpgti.wi')
+    tmpgtixron = mylib.TempfilePath.generate_from('tmpgti.wi')
     if not callftools(f"gti2xronwin -i '{gtitable.name}' -o '{tmpgtixron}'"):
-        my.printerr("Can't convert GTI to XRONOS format")
+        mylib.printerr("Can't convert GTI to XRONOS format")
         raise ExternalTaskError('gti2xronwin', filename=lcbkg, caller=_ownname)
 
     # Prepare PCO file
-    tmppco = my.TempfilePath.generate_from('tmppco.pco')
+    tmppco = mylib.TempfilePath.generate_from('tmppco.pco')
     with open(tmppco, 'w') as fpco:
         fpco.write("plot off\n")
         fpco.write("Col 1 on 2\n")
@@ -155,7 +155,7 @@ def xronos_plot_lcurve(
           ">/dev/null".format(len(lcurves), ' '.join(lcurves), tmpgtixron, binsize,
                               int(nbin), tmppco)
     if not callftools(cmd):
-        my.printerr("Can't plot the light curve")
+        mylib.printerr("Can't plot the light curve")
         raise ExternalTaskError('lcurve', filename=lcraw, caller=_ownname)
 
     check_result_file_appeared(outepsimg, _ownname)

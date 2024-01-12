@@ -3,9 +3,12 @@
 
 import sys
 from astropy.io import fits
-import myfits as my
-from myfits import ExtPath, ExtPathAbs, FilePathAbs
-from myfits.plot import PlotPair, plot_and_save
+
+import mypythonlib as mylib
+
+from .main import ExtPath, ExtPathAbs, FilePathAbs, \
+    fits_check_file_is_lc, fits_check_file_is_gti
+from .plot import PlotPair, plot_and_save
 
 
 def gtiplot(files: ExtPathAbs | tuple[ExtPathAbs] | list[ExtPathAbs],
@@ -27,7 +30,7 @@ def gtiplot(files: ExtPathAbs | tuple[ExtPathAbs] | list[ExtPathAbs],
         Name of a png-file to save the result. The default is None.
     onlysave
     """
-    _ownname = my.getownname()
+    _ownname = mylib.getownname()
     color = ['m', 'g', 'c', 'r']  # Color list
     gtilev = 1  # Default GTI level
 
@@ -89,17 +92,17 @@ if __name__ == '__main__':
     files_to_plot = []
     # Parse each input arguments and check them
     for curpath in argnspace.gtifiles:
-        files_to_plot.append(my.fits_check_file_is_gti(ExtPath(curpath)))
+        files_to_plot.append(fits_check_file_is_gti(ExtPath(curpath)))
 
     if pngname:
-        pngname = my.check_file_not_exist_or_remove(pngname, overwrite=True)
+        pngname = mylib.check_file_not_exist_or_remove(pngname, overwrite=True)
     
     if lcname:
-        lcname = my.fits_check_file_is_lc(lcname)  # Change from None to FilePathAbs
+        lcname = fits_check_file_is_lc(lcname)  # Change from None to FilePathAbs
     
     try:
         gtiplot(files_to_plot, lcpath=lcname, pngpath=pngname)
     except Exception as ex:
-        my.die(f'{ex}. Cannot plot the figure.')
+        mylib.die(f'{ex}. Cannot plot the figure.')
     
     

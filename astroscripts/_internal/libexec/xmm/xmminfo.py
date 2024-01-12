@@ -3,12 +3,12 @@
 """
 Created on Sat Jun 10 11:54:52 2023
 
-@author: kjsdja
+@author: KAtapin
 """
 
 import sys, argparse
-import xmmgeneral as xmm
-import myfits as my
+import astroscripts.missions.xmm.common as xmm
+from mypythonlib import printgreen
 
 
 def _main():
@@ -22,9 +22,9 @@ def _main():
     
     for file in evtfiles:
         filepath=xmm.xmm_check_file_is_evt(file)
-        my.printgreen("{}:".format(filepath.basename))
+        printgreen("{}:".format(filepath.basename))
         evtinfo = xmm.EVTinfo(file)
-        evtinfo.show()
+        evtinfo.describe()
         
 if __name__ == '__main__':    
     _main()

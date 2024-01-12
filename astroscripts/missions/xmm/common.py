@@ -39,14 +39,21 @@ SPEC_BINSIZE_MOS  = 5
 ################################################################
 
 import os, re
-from typing import Union, Type
-import myfits
-from myfits import Actions, FilePath, FilePathAbs, ExtPath, ExtPathAbs
-from myfits.external import ExternalTaskError, check_result_file_appeared, fitsimg_to_png
-from astropy.io import fits
 from enum import StrEnum
+from typing import Union, Type
+
+from astropy.io import fits
 from astropy.time import Time
 from astropy import units as u
+
+from mypythonlib import (
+    FilePath, FilePathAbs, TempfilePath, Actions, printerr, printwarn, callandlog,
+    printandlog, getownname, logger_turn_on
+)
+
+import astroscripts
+from astroscripts import ExtPath, ExtPathAbs, TaskError
+from astroscripts.external import ExternalTaskError, check_result_file_appeared, fitsimg_to_png
 
 
 ## Enumerations helping to choose the appropriate filtering expression
@@ -97,33 +104,33 @@ def xmm_get_instrument_type(instrkey:str):
     return instr
 
 
-def callxmm(cmd, stdin='', separate_logfile='', return_code=False):
-    """Call Chandra ciao programm, pass input and log result."""
-    return myfits.callandlog(cmd, stdin=stdin, separate_logfile=separate_logfile,
+def callxmmsas(cmd, stdin='', separate_logfile='', return_code=False):
+    """Call a program withing XMM-SAS, pass input and log result."""
+    return callandlog(cmd, stdin=stdin, separate_logfile=separate_logfile,
           extra_start='source ~/.bashrc \nsasinit >/dev/null\n',
-          return_code=return_code, progname='callxmm')   
+          return_code=return_code, progname='callxmmsas')
 
 
-def __call_and_check_result(cmd: str, targetfile: FilePathAbs, operation: str,
-                            xmmtaskname: str, progname: str, separate_logfile: str = '') -> bool:
-    if not callxmm(cmd, separate_logfile=separate_logfile):
-        myfits.printerr(f"Cannot perform {operation}: '{xmmtaskname}' finished with errors.", progname)
+def _call_and_check_result(cmd: str, targetfile: FilePathAbs, operation: str,
+                           xmmtaskname: str, progname: str, separate_logfile: str = '') -> bool:
+    if not callxmmsas(cmd, separate_logfile=separate_logfile):
+        printerr(f"Cannot perform {operation}: '{xmmtaskname}' finished with errors.", progname)
         raise ExternalTaskError(xmmtaskname, filename=targetfile, caller=progname)
     check_result_file_appeared(targetfile, progname)
     return True
 
 
-def __make_test_images(
+def _make_test_images(
         evtpath: FilePathAbs, outimg_png: FilePathAbs, expression: str = '',
         colX: str = 'X', colY: str = 'Y', outimg_fts: FilePathAbs = None,
         progname: str = None) -> object:
     """Create images filtered with the same GTI and aperture as the main product."""
-    imgfts = outimg_fts or myfits.TempfilePath.generate_from(outimg_png, new_suffix='.fts')
+    imgfts = outimg_fts or TempfilePath.generate_from(outimg_png, new_suffix='.fts')
     try:
         xmm_make_image(evtpath, imgfts, colX, colY, expression)
         fitsimg_to_png(imgfts, outimg_png)
-    except myfits.TaskError:
-        myfits.printwarn("Can't create the testimage.", progname)
+    except TaskError:
+        printwarn("Can't create the testimage.", progname)
         return False
     return True
             
@@ -137,19 +144,19 @@ def xmm_read_regfile(regfile: FilePathAbs) -> str:
     :returns: Expression to use with the 'evselect' test.
     """
     arealist=[]
-    _ownname=myfits.getownname()
+    _ownname=getownname()
     with open(regfile, "r") as freg:
         if freg.readline().strip() != "# Region file format: DS9 version 4.1":
-            myfits.printerr("Only DS9 version 4.1' region format is supported.", _ownname)
-            raise myfits.TaskError(_ownname, filename=regfile)
+            printerr("Only DS9 version 4.1' region format is supported.", _ownname)
+            raise TaskError(_ownname, filename=regfile)
             
         # Skip second line with region file specification
         freg.readline()
         
         # Coordinate system
         if freg.readline().strip()!='physical':
-            myfits.printerr("Wrong coordinate system. Coorinate system must be 'physical'.",_ownname)
-            raise myfits.TaskError(_ownname, filename=regfile)
+            printerr("Wrong coordinate system. Coorinate system must be 'physical'.",_ownname)
+            raise TaskError(_ownname, filename=regfile)
         for line in freg.readlines():
             areastr=line.strip()    # String with area definition
             match=re.match("^(\w+)\((.*)\)$", areastr)
@@ -162,11 +169,11 @@ def xmm_read_regfile(regfile: FilePathAbs) -> str:
                     arealist.append("(X,Y) IN box(%s,%s,%s,%s,%s)" % (bxp[0],
                     bxp[1],float(bxp[2])/2,float(bxp[3])/2,bxp[4]))
                 else:
-                    myfits.printerr(f"Unknown region shape '{shape}'. Can't read the region file", _ownname)
-                    raise myfits.TaskError(_ownname, filename=regfile)
+                    printerr(f"Unknown region shape '{shape}'. Can't read the region file", _ownname)
+                    raise TaskError(_ownname, filename=regfile)
             else:
-                myfits.printerr(f"Cannot parse region file: wrong line '{areastr}'",_ownname)
-                raise myfits.TaskError(_ownname, filename=regfile)
+                printerr(f"Cannot parse region file: wrong line '{areastr}'",_ownname)
+                raise TaskError(_ownname, filename=regfile)
     return "||".join(arealist)    # Expression to select region
 
 
@@ -180,7 +187,7 @@ def xmm_make_image(evtfile: FilePathAbs, imgfile: FilePathAbs,
         "yimagesize={:d}".format(evtfile.fspath, imgfile.fspath, expression_statement,
         colxname, colyname, xbin, ybin)
 
-    if __call_and_check_result(cmd, imgfile, 'image creation', 'evselect', myfits.getownname(), logfile):
+    if _call_and_check_result(cmd, imgfile, 'image creation', 'evselect', getownname(), logfile):
         return True
     return False
 
@@ -188,10 +195,10 @@ def xmm_make_image(evtfile: FilePathAbs, imgfile: FilePathAbs,
 def xmm_get_mjdobs(path: os.PathLike | str, time_object: bool = False) -> tuple:
     """Get analogues of the MJD-OBS and MJD-END keywords which is normally absent in the XMM data."""
     with fits.open(path) as fts:
-        if myfits.fits_check_hdu_is_spectrum(fts[1], action=Actions.NOTHING) or xmm_check_hdu_is_evt(fts[1]):
+        if astroscripts.fits_check_hdu_is_spectrum(fts[1], action=Actions.NOTHING) or xmm_check_hdu_is_evt(fts[1]):
             ti1 = Time(fts[0].header['DATE-OBS'], format='fits')  # Zero-extension!
             ti2 = Time(fts[0].header['DATE-END'], format='fits')  # Zero-extension!
-        elif myfits.fits_check_hdu_is_lc(fts[1], silent=True):
+        elif astroscripts.fits_check_hdu_is_lc(fts[1], silent=True):
             mjdref = fts[1].header['MJDREF']
             tstart = fts[1].header['TSTART']
             tstop = fts[1].header['TSTOP']
@@ -205,7 +212,7 @@ def xmm_get_mjdobs(path: os.PathLike | str, time_object: bool = False) -> tuple:
 def xmm_check_file_is_evt(filepath: Union[ExtPath, FilePath, str],
                           action: Actions = Actions.DIE, progname=None) -> ExtPathAbs | None:
     """Check whether the first extension is an XMM event file and return abspath."""
-    return myfits.main._helper_check_file_is(xmm_check_hdu_is_evt, 'XMM evt-file', filepath,
+    return astroscripts.main._helper_check_file_is(xmm_check_hdu_is_evt, 'XMM evt-file', filepath,
                                              default_hdu='EVENTS', action=action, progname=progname)
 
 
@@ -262,19 +269,19 @@ class EVTinfo:
         self.telapse  = header['TELAPSE']
         self.times    = xmm_get_mjdobs(evtpath, time_object=True)
         self.filepath = evtpath
-        
-    def show(self):
+
+    def describe(self):
         """Print summary."""
         _ownname='evtinfo'
-        myfits.printandlog("Data mode:       {}".format(self.datamode),_ownname)
-        myfits.printandlog("Data submode:    {}".format(self.submode),_ownname)
-        myfits.printandlog("Filter:          {}".format(self.filter),_ownname)
-        myfits.printandlog("Exposure ID:     {}".format(self.expidstr),_ownname)
-        myfits.printandlog("Exposure length: {:.2f}".format(self.telapse),_ownname)
-        myfits.printandlog("Start time:      {0.fits} (MJD{0.mjd:.5f})".format(self.times[0]),_ownname)
-        myfits.printandlog("Stops time:      {0.fits} (MJD{0.mjd:.5f})".format(self.times[1]),_ownname)
-        myfits.printandlog("Used chips: {}".format(', '.join(str(x) for x in self.chips)),_ownname)
-        myfits.printandlog("Frame time (sec.): {}".format(', '.join(str(x) for x
+        printandlog("Data mode:       {}".format(self.datamode),_ownname)
+        printandlog("Data submode:    {}".format(self.submode),_ownname)
+        printandlog("Filter:          {}".format(self.filter),_ownname)
+        printandlog("Exposure ID:     {}".format(self.expidstr),_ownname)
+        printandlog("Exposure length: {:.2f}".format(self.telapse),_ownname)
+        printandlog("Start time:      {0.fits} (MJD{0.mjd:.5f})".format(self.times[0]),_ownname)
+        printandlog("Stops time:      {0.fits} (MJD{0.mjd:.5f})".format(self.times[1]),_ownname)
+        printandlog("Used chips: {}".format(', '.join(str(x) for x in self.chips)),_ownname)
+        printandlog("Frame time (sec.): {}".format(', '.join(str(x) for x
                                             in set(self.frmtime.values()))), _ownname)
       
     
