@@ -4,10 +4,10 @@ a common python library and a number of executable files divided into several se
 ### xmm
 Scripts for processing XMM-Newton/EPIC observations:
 
-``xmminfo.py`` shows short info about an EVT-file\
-``xmmflt.py``  perform basic filtering of the EVT-file\
-``xmmlc.py``   extracts a light curve from the EVT-file\
-``xmmspec.py`` extracts a spectrum
+``xmminfo`` shows short info about an EVT-file\
+``xmmflt``  perform basic filtering of the EVT-file\
+``xmmlc``   extracts a light curve from the EVT-file\
+``xmmspec`` extracts a spectrum
 
 ### swift
 Scripts for Swift/XRT observations:
@@ -21,7 +21,7 @@ with auxiliary files needed for the expomap generation\
 ``swift_expmap`` produces the combined expomap
 
 ### chandra 
-Scritps for Chandra observations:
+Scripts for Chandra observations:
 
 ``chandra_proper_download`` wrapper for the download_chandra_obsid task 
 which allows to download observations in conditions of a poor
@@ -40,15 +40,16 @@ passed. Also, one can pass common scale and zoom options.
  - numpy
  - astropy
  - matplotlib
- - scipy (for statistical calculations)
- - pyds9 (for viewing FITS files)
+ - scipy 
+ - pyds9 
 
-## Installation
-Just copy the package to any folder and then execute the ``init.sh`` script to setup
-the PATH and PYTHONPATH variables (use ``source`` or ``.`` to execute
-it in the same shell).
+## Installation and usage
+Preferred installation method is the use of [pipx](https://pipx.pypa.io/stable/).
+To activate a specific collection together with the package virtual environment
+execute ``astroscripts`` with the collection name argument:
 ```
-source init.sh all
+$ pipx intstall https://github.com/katapin/AstroScripts.git
+$ astroscipts <collection-name>
 ```
 
 
