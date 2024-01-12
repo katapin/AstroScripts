@@ -8,7 +8,7 @@ import argparse
 
 import mypythonlib as mylib
 from mypythonlib import FilePath, FilePathAbs
-from astroscripts import gtiplot
+from astroscripts.gtiplot import gtiplot
 from astroscripts import ExtPathAbs, TaskError
 
 import astroscripts.missions.xmm.common as xmm
@@ -127,9 +127,6 @@ def _main():
     except Exception as ex:
         mylib.die(f"{ex}. Cannot process '{evtpath.name}'")
     mylib.printcaption("Finished")
-    evtinfo.show()
-
-
-if __name__ == '__main__':    
-    _main()
+    mylib.printbold(f"Info for the original EVT-file ({evtinfo.filepath.name}):", progname='')
+    evtinfo.describe()
 
