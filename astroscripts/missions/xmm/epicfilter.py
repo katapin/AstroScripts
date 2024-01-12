@@ -9,7 +9,8 @@ import argparse
 import mypythonlib as mylib
 from mypythonlib import FilePath, FilePathAbs
 from astroscripts.gtiplot import gtiplot
-from astroscripts import ExtPathAbs, TaskError
+from astroscripts.exceptions import TaskError
+from astroscripts.extpath import ExtPathAbs
 
 import astroscripts.missions.xmm.common as xmm
 from astroscripts.missions.xmm.common import EVTinfo

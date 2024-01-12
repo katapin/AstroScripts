@@ -51,9 +51,10 @@ from mypythonlib import (
     printandlog, getownname, logger_turn_on
 )
 
-import astroscripts
-from astroscripts import ExtPath, ExtPathAbs, TaskError
-from astroscripts.external import ExternalTaskError, check_result_file_appeared, fitsimg_to_png
+import astroscripts.fitschecks as checks
+from astroscripts.extpath import ExtPath, ExtPathAbs
+from astroscripts.exceptions import ExternalTaskError, TaskError
+from astroscripts.external import _check_result_file_appeared, fitsimg_to_png
 
 
 ## Enumerations helping to choose the appropriate filtering expression
@@ -116,7 +117,7 @@ def _call_and_check_result(cmd: str, targetfile: FilePathAbs, operation: str,
     if not callxmmsas(cmd, separate_logfile=separate_logfile):
         printerr(f"Cannot perform {operation}: '{xmmtaskname}' finished with errors.", progname)
         raise ExternalTaskError(xmmtaskname, filename=targetfile, caller=progname)
-    check_result_file_appeared(targetfile, progname)
+    _check_result_file_appeared(targetfile, progname)
     return True
 
 
@@ -195,10 +196,10 @@ def xmm_make_image(evtfile: FilePathAbs, imgfile: FilePathAbs,
 def xmm_get_mjdobs(path: os.PathLike | str, time_object: bool = False) -> tuple:
     """Get analogues of the MJD-OBS and MJD-END keywords which is normally absent in the XMM data."""
     with fits.open(path) as fts:
-        if astroscripts.fits_check_hdu_is_spectrum(fts[1], action=Actions.NOTHING) or xmm_check_hdu_is_evt(fts[1]):
+        if checks.hdu_is_spectrum(fts[1], action=Actions.NOTHING) or xmm_check_hdu_is_evt(fts[1]):
             ti1 = Time(fts[0].header['DATE-OBS'], format='fits')  # Zero-extension!
             ti2 = Time(fts[0].header['DATE-END'], format='fits')  # Zero-extension!
-        elif astroscripts.fits_check_hdu_is_lc(fts[1], silent=True):
+        elif checks.hdu_is_lc(fts[1], silent=True):
             mjdref = fts[1].header['MJDREF']
             tstart = fts[1].header['TSTART']
             tstop = fts[1].header['TSTOP']
@@ -212,7 +213,7 @@ def xmm_get_mjdobs(path: os.PathLike | str, time_object: bool = False) -> tuple:
 def xmm_check_file_is_evt(filepath: Union[ExtPath, FilePath, str],
                           action: Actions = Actions.DIE, progname=None) -> ExtPathAbs | None:
     """Check whether the first extension is an XMM event file and return abspath."""
-    return astroscripts.main._helper_check_file_is(xmm_check_hdu_is_evt, 'XMM evt-file', filepath,
+    return checks._helper_check_file_is(xmm_check_hdu_is_evt, 'XMM evt-file', filepath,
                                              default_hdu='EVENTS', action=action, progname=progname)
 
 

@@ -1,5 +1,4 @@
-"""Provide facilities to manipulate FITS files."""
+"""Collection of scripts for the analysis of astronomical data."""
 
-from .main import *
-from .xspec import Xspec
+#from .xspec import Xspec
 

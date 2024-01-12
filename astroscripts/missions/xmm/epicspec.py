@@ -7,7 +7,9 @@ from dataclasses import dataclass, asdict
 
 import mypythonlib as mylib
 from mypythonlib import FilePath, FilePathAbs
-from astroscripts import ExtPathAbs, TaskError, gti_get_limits, fits_check_file_is_gti
+import astroscripts.fitschecks as checks
+from astroscripts.exceptions import TaskError
+from astroscripts.extpath import ExtPathAbs
 import astroscripts.missions.xmm.common as xmm
 from astroscripts.missions.xmm.common import EVTinfo
 
@@ -242,7 +244,7 @@ def _main():
     
     if not argnspace.regroup:  # Standard analysis
         _checks_for_xmmspec_make_products(prod_names, argnspace.clobber)
-        gtipath = fits_check_file_is_gti(argnspace.gtifile[0])
+        gtipath = checks.file_is_gti(argnspace.gtifile[0])
         regobj  = mylib.check_file_exists(argnspace.regobj[0])
         regbkg  = mylib.check_file_exists(argnspace.regbkg[0])
     

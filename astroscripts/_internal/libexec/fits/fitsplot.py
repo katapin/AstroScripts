@@ -157,7 +157,7 @@ if __name__ == '__main__':
         #Check the file exists
         if argnspace.format == 'fits':
             try:
-                result.path=my.fits_check_file_is_fits(result.path, result.hdu, action=my.Action.EXCEPTION)
+                result.path=my.file_is_fits(result.path, result.hdu, action=my.Action.EXCEPTION)
             except TypeError:  #File is not a FITS, may be it is an ascii table
                 my.die(f"It seems the file '{result.path}' you're trying to read is not a FITS file. Use the '--format' "\
                        "argument to open an ASCII table.")

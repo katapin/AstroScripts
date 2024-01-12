@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from functools import singledispatch, singledispatchmethod
 from mypythonlib import printwarn
 from .main import FilePathAbs
-from .external import check_result_file_appeared
+from .external import _check_result_file_appeared
 
 
 def _vec_checks(vec, vecname=None, refshape=None, *, none_is_allowed=False, 
@@ -396,7 +396,7 @@ def _plot_and_save_list(data: list[PlotPair] | tuple[PlotPair],
     if imgpath:
         fig = plt.gcf()
         fig.savefig(imgpath.fspath)
-        check_result_file_appeared(imgpath, progname)
+        _check_result_file_appeared(imgpath, progname)
 
     if onlysave:
         if not imgpath:

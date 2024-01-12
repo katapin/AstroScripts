@@ -9,8 +9,11 @@ from astropy.io import fits
 
 import mypythonlib as mylib
 from mypythonlib import FilePath, FilePathAbs
+import astroscripts.fitschecks as checks
 from astroscripts.external import xronos_plot_lcurve
-from astroscripts import ExtPathAbs, TaskError, gti_get_limits, fits_check_file_is_gti
+from astroscripts.exceptions import TaskError
+from astroscripts.extpath import ExtPathAbs
+from astroscripts.other import gti_get_limits
 import astroscripts.missions.xmm.common as xmm
 from astroscripts.missions.xmm.common import EVTinfo
 
@@ -299,7 +302,7 @@ def _main():
         regbkgdict[instr] = mylib.check_file_exists(arg_regbkgfiles[i])
         
     # Check GTI file exists
-    gtifile=fits_check_file_is_gti(arg_gtifile)
+    gtifile=checks.file_is_gti(arg_gtifile)
 
     # Check energy range
     if mine<0.2 or mine>12:

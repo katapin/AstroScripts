@@ -1,37 +1,22 @@
 """Provide facilities for calling external programs."""
-import os
+
 import mypythonlib as mylib
-from .main import TaskError, FilePathAbs, ExtPathAbs, gti_get_limits
-
-
-class ExternalTaskError(TaskError):
-    """Exception caused due to external program to raise in custom scripts."""
-
-    def __init__(self, taskname: str, *, custom_message: str = None,
-                 filename: str | os.PathLike = '', caller: str = ''):
-        self.taskname = taskname
-        if custom_message:
-            self.msg = custom_message
-        else:
-            all_args=locals()
-            extra_info = ["{}='{}'".format(x, all_args[x]) for x in ['filename', 'caller'] if all_args[x] ]
-            self.msg = f"Task '{taskname}' finished with error"
-            self.msg += ' ({}).'.format(', '.join(extra_info)) if extra_info else '.'
-        self.filename = os.fspath(filename)
-        self.caller=caller
-        super().__init__(taskname, self.msg, self.filename)
+from mypythonlib import FilePathAbs, check_file_not_exist_or_remove
+from .extpath import ExtPathAbs
+from .exceptions import TaskError, ExternalTaskError
+from .other import gti_get_limits
 
 
 def callshell(cmd: str, stdin: str = '', separate_logfile: FilePathAbs = '',
               return_code: bool = False) -> bool | tuple[bool, int]:
-    """Call shell program, pass input and log result."""
+    """Call shell program, pass the input and log the result."""
     return mylib.callandlog(cmd, stdin=stdin, separate_logfile=separate_logfile,
                             return_code=return_code, progname='callshell')
 
 
 def callftools(cmd: str, stdin: str = '', separate_logfile: FilePathAbs = '',
                return_code: bool = False) -> bool | tuple[bool, int]:
-    """Call ftools program, pass input and log result."""
+    """Call ftools program, pass the input and log the result."""
     return mylib.callandlog(cmd, stdin=stdin, separate_logfile=separate_logfile,
                             extra_start='source ~/.bashrc \nheainit\n',
                             return_code=return_code, progname='callftools')
@@ -39,17 +24,20 @@ def callftools(cmd: str, stdin: str = '', separate_logfile: FilePathAbs = '',
 
 def callciao(cmd: str, stdin: str = '', separate_logfile: FilePathAbs = '',
              return_code: bool = False) -> bool | tuple[bool, int]:
-    """Call Chandra ciao program, pass input and log result."""
+    """Call Chandra's ciao program, pass the input and log the result."""
     return mylib.callandlog(cmd, stdin=stdin, separate_logfile=separate_logfile,
                             extra_start='source ~/.bashrc \nciaoinit >/dev/null\n',
                             return_code=return_code, progname='callciao')
 
 
-def check_result_file_appeared(filepath: FilePathAbs, progname: str) -> None:
+def _check_result_file_appeared(filepath: FilePathAbs, progname: str) -> None:
     if not filepath.exists():
         mylib.printerr(f"Something is going wrong: '{filepath}' has not been created.", progname)
         raise TaskError(progname, filename=filepath)
     mylib.printbold(f"Saved '{filepath.name}'", progname)
+
+
+#### Some task associated with external programs
 
 
 def fitsimg_to_png(ftspath: FilePathAbs, imgpath: FilePathAbs = None, ds9_extra_commands: str = '',
@@ -72,7 +60,7 @@ def fitsimg_to_png(ftspath: FilePathAbs, imgpath: FilePathAbs = None, ds9_extra_
         mylib.printerr(f"Cannot call 'convert', '{imgpath.name}' is not created.", _ownname)
         raise ExternalTaskError('convert', filename=imgpath.name, caller=_ownname)
 
-    check_result_file_appeared(imgpath, _ownname)
+    _check_result_file_appeared(imgpath, _ownname)
     return True
 
 
@@ -80,7 +68,7 @@ def xronos_plot_lcurve(
         lcraw: FilePathAbs, gtitable: ExtPathAbs, outepsimg: FilePathAbs,
         lcbkg: FilePathAbs = None, bkgratio: float = None, lcnet: FilePathAbs = None,
         binsize: int = 500):
-    """Make an eps image of the light curve using  the 'lcurve' task of XRONOS.
+    """Make an eps image of the light curve using the 'lcurve' task from XRONOS.
 
     Parameters
     ----------
@@ -158,5 +146,22 @@ def xronos_plot_lcurve(
         mylib.printerr("Can't plot the light curve")
         raise ExternalTaskError('lcurve', filename=lcraw, caller=_ownname)
 
-    check_result_file_appeared(outepsimg, _ownname)
+    _check_result_file_appeared(outepsimg, _ownname)
+    return True
+
+
+def grppha_group_spectrum(infile: FilePathAbs, outfile='', group_min_counts=1, clobber=False):
+    """Call grppha to group the spectrum."""
+    _ownname = mylib.getownname()
+
+    if not outfile:
+        outfile = infile.with_stem_ending('_grp{}'.format(group_min_counts))
+
+    check_file_not_exist_or_remove(outfile, override=clobber, action='exception')
+    if not callftools('grppha {} {}'.format(infile, outfile),
+                      stdin='group min {}\nexit\n'.format(group_min_counts)):
+        mylib.printerr("Can't plot the light curve")
+        raise ExternalTaskError('lcurve', filename=infile, caller=_ownname)
+
+    _check_result_file_appeared(outfile, _ownname)
     return True
