@@ -9,6 +9,8 @@ dependencies = [
     'numpy',
     'scipy',
     'astropy',
+    'matplotlib'
+    'pyds9',
     'mypythonlib @ git+https://github.com/katapin/MyPythonLib.git'
 ]
 
