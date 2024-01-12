@@ -144,19 +144,19 @@ def xmm_read_regfile(regfile: FilePathAbs) -> str:
     :returns: Expression to use with the 'evselect' test.
     """
     arealist=[]
-    _ownname=getownname()
+    progname=progname=getownname()
     with open(regfile, "r") as freg:
         if freg.readline().strip() != "# Region file format: DS9 version 4.1":
-            printerr("Only DS9 version 4.1' region format is supported.", _ownname)
-            raise TaskError(_ownname, filename=regfile)
+            printerr("Only DS9 version 4.1' region format is supported.", progname=progname)
+            raise TaskError(progname=progname, filename=regfile)
             
         # Skip second line with region file specification
         freg.readline()
         
         # Coordinate system
         if freg.readline().strip()!='physical':
-            printerr("Wrong coordinate system. Coorinate system must be 'physical'.",_ownname)
-            raise TaskError(_ownname, filename=regfile)
+            printerr("Wrong coordinate system. Coorinate system must be 'physical'.",progname=progname)
+            raise TaskError(progname=progname, filename=regfile)
         for line in freg.readlines():
             areastr=line.strip()    # String with area definition
             match=re.match("^(\w+)\((.*)\)$", areastr)
@@ -169,11 +169,11 @@ def xmm_read_regfile(regfile: FilePathAbs) -> str:
                     arealist.append("(X,Y) IN box(%s,%s,%s,%s,%s)" % (bxp[0],
                     bxp[1],float(bxp[2])/2,float(bxp[3])/2,bxp[4]))
                 else:
-                    printerr(f"Unknown region shape '{shape}'. Can't read the region file", _ownname)
-                    raise TaskError(_ownname, filename=regfile)
+                    printerr(f"Unknown region shape '{shape}'. Can't read the region file", progname=progname)
+                    raise TaskError(progname=progname, filename=regfile)
             else:
-                printerr(f"Cannot parse region file: wrong line '{areastr}'",_ownname)
-                raise TaskError(_ownname, filename=regfile)
+                printerr(f"Cannot parse region file: wrong line '{areastr}'",progname=progname)
+                raise TaskError(progname=progname, filename=regfile)
     return "||".join(arealist)    # Expression to select region
 
 
@@ -270,19 +270,18 @@ class EVTinfo:
         self.times    = xmm_get_mjdobs(evtpath, time_object=True)
         self.filepath = evtpath
 
-    def describe(self):
+    def describe(self, progname=''):
         """Print summary."""
-        _ownname='evtinfo'
-        printandlog("Data mode:       {}".format(self.datamode),_ownname)
-        printandlog("Data submode:    {}".format(self.submode),_ownname)
-        printandlog("Filter:          {}".format(self.filter),_ownname)
-        printandlog("Exposure ID:     {}".format(self.expidstr),_ownname)
-        printandlog("Exposure length: {:.2f}".format(self.telapse),_ownname)
-        printandlog("Start time:      {0.fits} (MJD{0.mjd:.5f})".format(self.times[0]),_ownname)
-        printandlog("Stops time:      {0.fits} (MJD{0.mjd:.5f})".format(self.times[1]),_ownname)
-        printandlog("Used chips: {}".format(', '.join(str(x) for x in self.chips)),_ownname)
+        printandlog("Data mode:       {}".format(self.datamode), progname=progname)
+        printandlog("Data submode:    {}".format(self.submode), progname=progname)
+        printandlog("Filter:          {}".format(self.filter),progname=progname)
+        printandlog("Exposure ID:     {}".format(self.expidstr),progname=progname)
+        printandlog("Exposure length: {:.2f}".format(self.telapse),progname=progname)
+        printandlog("Start time:      {0.fits} (MJD{0.mjd:.5f})".format(self.times[0]),progname=progname)
+        printandlog("Stops time:      {0.fits} (MJD{0.mjd:.5f})".format(self.times[1]),progname=progname)
+        printandlog("Used chips: {}".format(', '.join(str(x) for x in self.chips)),progname=progname)
         printandlog("Frame time (sec.): {}".format(', '.join(str(x) for x
-                                            in set(self.frmtime.values()))), _ownname)
+                                            in set(self.frmtime.values()))), progname=progname)
       
     
 

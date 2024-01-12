@@ -17,12 +17,12 @@ def _main():
     parser.add_argument('evtfile', nargs='+', help="names of the "
     "XMM-Newton EVENT-files")
     
-    argnspace=parser.parse_args(sys.argv[1:])
-    evtfiles=argnspace.evtfile
+    argnspace = parser.parse_args(sys.argv[1:])
+    evtfiles = argnspace.evtfile
     
     for file in evtfiles:
-        filepath=xmm.xmm_check_file_is_evt(file)
-        printgreen("{}:".format(filepath.basename))
+        filepath = xmm.xmm_check_file_is_evt(file)
+        printgreen("Info for {}:".format(filepath), progname='')
         evtinfo = xmm.EVTinfo(file)
         evtinfo.describe()
         
