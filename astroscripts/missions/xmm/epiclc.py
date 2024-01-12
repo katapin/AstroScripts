@@ -1,9 +1,8 @@
 #!/usr/bin/python
-"""Extract light curves from XMM-Newton observation."""
+"""Extract light curves from observation taken with XMM-Newton EPIC detectors."""
 
-
-
-import sys, os
+import os
+import sys
 from typing import Self
 from dataclasses import dataclass, asdict
 from astropy.io import fits
@@ -176,7 +175,7 @@ def xmmlc_make_products(
     cmd="epiclccorr srctslist='{raw}' eventlist='{mainevt}' outset='{net}' "\
         "withbkgset=yes bkgtslist='{bkg}' applyabsolutecorrections=yes".\
         format(mainevt=evtinfo.filepath.fspath, **prod_names.abs)
-    mylib.common._call_and_check_result(cmd, prod_names.abs['net'], 'background subtraction',
+    xmm._call_and_check_result(cmd, prod_names.abs['net'], 'background subtraction',
                                'epiclccorr', _ownname)
     
     # Plot light curves
