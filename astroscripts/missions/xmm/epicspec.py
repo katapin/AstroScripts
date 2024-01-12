@@ -1,5 +1,5 @@
 #!/usr/bin/python
-"""Extract spectra from XMM-Newton observations."""
+"""Extract spectra from observation taken with XMM-Newton EPIC detectors."""
 
 import os
 import sys
@@ -242,7 +242,7 @@ def _main():
     
     if not argnspace.regroup:  # Standard analysis
         _checks_for_xmmspec_make_products(prod_names, argnspace.clobber)
-        gtipath = mylib.fits_check_file_is_gti(argnspace.gtifile[0])
+        gtipath = fits_check_file_is_gti(argnspace.gtifile[0])
         regobj  = mylib.check_file_exists(argnspace.regobj[0])
         regbkg  = mylib.check_file_exists(argnspace.regbkg[0])
     
