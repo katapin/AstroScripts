@@ -2,120 +2,39 @@
 
 import numpy as np
 from numpy import ndarray
-import scipy
-from math import factorial as fact
 from astropy.io import fits
 from astropy.time import Time
 from astropy import units
 from typing import List, Union
 from functools import singledispatchmethod
-import mypython as my
-from mypython import Actions
-from .plot import PlotPair, PlotVector, PlotPairUplimits
-from . import main 
-from .main import ExtPath
-
+from mypythonlib import printwarn
+from mypythonlib.collections import ROdict
+from .. import fitschecks as checks
+from ..plot import PlotPair, PlotVector
+from ..extpath import ExtPath
+from ._common import LCError
+from ._loader import _LC_read_helper
 
 #TODO list
-#1)Class from xmm light curve that can excrete the back ground LC from
-# BACKV and BACKE columns in NET lc-FITS.
+# 1) make time column an object of its own class:
+#   - make a special object to store Timezero
+#   - __eq__ must return True if both time columns data and timezeros coincides
+#   - delegate it check_synchronicity()'s job
 
-"""
-Some thoughts about rebining algorithms.
-
-About TIMEPIXR
-Let's suppose timestep is 2s. If TIMEPIXR=0.5 the timestamps will's as follows
- | bin-1 | bin-2 | bin-3 | bin-4 | bin-5 | bin-6 | bin-7 | bin-8 |....   
- |   ^   |   ^   |   ^   |   ^   |   ^   |   ^   |   ^   |   ^   |
-     0s      2s      4s      6s  |   8s  |  10s  |  12s  |  14s  |  
-The TIMEZERO keyword in the FITS  header refers to the timstamp 0s (and not to
-the star time of the exposure!). If we, for example, everage 4 bins, we'll obtain:
- |           long bin            |           long bin            |.... 
- |   ^           ^               |               ^               |           
-   timezero      3s              |              11s              |
-Now the TIMEZERO no longer refers to the bin center, but timestamps are 
-correct and still refer the bin center. Thus, only TIMEPIXR=0.5 remain valid
-after the rebinning
+__all__ = [
+    "LCrate",
+    "LCrateBinned",
+    "LCrateBinnedEven",
+    "LCcntBinned",
+    "LCcntBinnedEven"
+]
 
 
-###########################
-About getgroups_continous()
-Let's suppose maxgap = 1 (in units of TIMEDEL), one bin can be missed 
-
-detector in operation: |+++|+++|+++|   |+++|+++|   |   |   |+++|+++|   |   |+++|+++|+++|   |   |+++|| END
-   time              : | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 12| 13| 14| 15| 16| 17| 18|| END
-   indixes           : | 0 | 1 | 2 |   | 3 | 4 |           | 5 | 6 |       | 7 | 8 | 9 |       | 10||
-
-Data (after removing empty bins)
-array index  : 0 1 2 3 4 5  6  7  8  9  10
-time column  : 0 1 2 4 5 9  10 13 14 15 18
-time[1:]     : 1 2 4 5 9 10 13 14 15 18
-time[:-1]    : 0 1 2 4 5 9  10 13 14 15
-time diff    : 1 1 2 1 4 1  3  1  1  3
-Indices of diff>(maxgap+1)  : 4 6 9
-group0 = range(0, 4+1)  - > 0 1 2 3 4
-group1 = range(4+1, 6+1) -> 5 6
-group2 = range(6+1, 9+1) -> 7 8 9
-group3 = range(9+1, len) -> 10
-
-
-############################
-About getgroups_mincounts()
-
-detector in operation: |+++|+++|+++|+++|+++|+++|+++|+++|+++|   |+++|+++|+++|+++|+++|   |+++|+++|   |+++|+++|+++|+++|+++||END
-photons arrived      : |   | 1 |   | 2 | 2 |   | 2 |   |   |   |   |   |   |   |   |   |   | 1 |   | 1 | 1 |   |   |   ||END 
-   time              : | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10| 11| 12| 13| 14| 15| 16| 17| 18| 19| 20| 21| 22| 23||END
-   indexes           : | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |   | 9 | 10| 11| 12| 13|   | 14| 15|   | 16| 17| 18| 19| 20||END
-Let's add a photon far-far away (e.g. at time=1000) for algorithmic purposes
-Cells with arrived counts > 0 
-indices of photons : 1 3 4 6 15 16 17 21
-timestamps         : 1 3 4 6 17 19 20 1000
-Case 1) mincounts = 4, maxbinlength=5s  
-Starting...
-Set gs=0 -- index of group start, prev = -1 --- index of previous photon
-Begin k-loop over list with photon indexes 
-prev=-1, k=1, put photon to 'buff', because 'buff'<4 and time[k]-time[gs]+bw < maxbinlength
-prev=1, k=3, put photons 
-prev=3, k=4, put photons because before if 'buff' was still <4
-prev=4, k=6, buf=5. Set ge=prev, group.append(range(gs,ge+1)), set buff=0,
-  set gs=ge+1, put photons to buf 
-prev=6, k=15, buf=2, time[k]-time[gs]+bw> maxbinlength
-  Begin loop while (time[gs] - time[k]+bw) > maxbinlength
-    Begin reverse j-loop from k-1(=14) to gs(=5)
-    j=14, time[14]=16, time[gs]=5, (14-5+bw)>5
-    ....
-    j=8, time[8]=8,  time[gs]=5, (10-8+bw)=4
-        set ge=j, group2.append(range(gs,ge+1)), set buf=0, set gs=ge+1=9,
-        j-loop ended
-    Begin reverse j-loop from k-1=(14) to gs(=9)
-    j=14, time[14]=16, time[gs]=10, (16-10+bw)>5
-    j=13, time[14]=13, time[gs]=10, (13-10+bw)=5
-        set ge=j, group2.append(range(gs,ge+1)), set buf=0, set gs=ge+1=14,
-        j-loop ended
-    while loop ended
-  put photon at k=15 to buf, buf=1 
-prev=15, k=16, put photon
-prev=16, k=17, put photon
-prev=17, k=21, its the fake photon with time[21]=1000
-  Begin loop while (time[gs] - time[k]+bw) > maxbinlength
-    Begin reverse j-loop from k-1(=20) to gs(=14)
-    j=20, time[23]=24, time[gs]=16
-    ....
-    j=17
-    
-"""
-
-class LCError(Exception):
-    """Class for errors arising during manipulation with light curves.""" 
-    
-    pass
-
-
-class ColumnStorage(my.ROdict):
+class ColumnStorage(ROdict):
     """Read-only dict to store ndarray vectors."""
     
     def _item_change_existing_as_normal(self, key, val):
-        self._dict[key][:] =  val
+        self._dict[key][:] = val
         
     def _item_get_missing_as_normal(self, key):
         raise KeyError(f"Column '{key}' doesn't exist.")
@@ -133,66 +52,7 @@ class ColumnStorage(my.ROdict):
         return text + '\n'.join(lst) +' }'
 
 
-class _LC_read_helper():
-    """Provide telescope dependent column mapping for LCurveBinnedEven.from_fits()."""
-    
-    keyword_to_read = ['OBS_ID', 'EXPOSURE', 'LIVETIME', 'DATE-OBS', 'DATE-END',
-                       'OBJECT', 'MJD-OBS', 'TOTCTS', 'CHANMIN', 'CHANMAX', 'BACKSCAL']
-    
-    def __init__(self, HDU, absent_keywords={}):
-        telescope = HDU.header.get('TELESCOP','generic')
-        self.telesope = telescope
-        self.HDU = HDU
-        self.absent_keywords = absent_keywords
-        processor = self.__getattribute__(telescope.capitalize()) #Get specific functions
-        processor()
-        
-    def _do_job(self, colmap:dict, keyword_to_read:list=[]):
-        #colmap = dict(time='TIME', rate='COUNT_RATE', etc.), it will be used to
-        #unpack arguments for LCurveBinnedEven constructor as arg=vector
-        self.required_columns = {arg:self.HDU.data[colname] for arg,colname in colmap.items()}
-        self.extra_columns = {colname:self.HDU.data[colname] for colname in self.HDU.columns.names \
-             if colname not in colmap.values()}
-            
-        #Read time keywords (mandatory) from FITS header 
-        self.timekeys=(main.fits_keywords_getmany(self.HDU, LCrateBinnedEven._timekeys_default, 
-               self.absent_keywords, action=Actions.EXCEPTION))
-        self.TIMEDEL = self.timekeys['TIMEDEL']
-        
-        #Read optiocal keywords from FITS header 
-        self.keywords = {'TELESCOP':self.telesope}
-        self.keywords.update(main.fits_keywords_getmany(self.HDU, keyword_to_read, 
-               action=Actions.NOTHING))
-        
-    def Generic(self):
-        colmap = dict(time='TIME', rate='RATE', rate_err='ERROR', fracexp='FRACEXP')
-        self._do_job(colmap)
-        
-    def Swift(self):
-        colmap = dict(time='TIME', rate='RATE', rate_err='ERROR', fracexp='FRACEXP')
-        self._do_job(colmap, self.keyword_to_read)
-        
-    def Chandra(self):
-        colmap = dict(time='TIME', rate='COUNT_RATE', rate_err='COUNT_RATE_ERR')
-        self.absent_keywords['TIMEZERO']=0
-        self._do_job(colmap, self.keyword_to_read)
-        #Chandra doesn't have the FRACEXP column but has EXPOSURE instead
-        self.required_columns['fracexp'] = self.HDU.data['EXPOSURE']/self.TIMEDEL 
-        #TODO make time_err from TIME_END - TIME_START
-        
-    def Xmm(self):
-        self.absent_keywords.update({'TIMEZERO':0, 'TIMEPIXR':0.5})
-        colmap = dict(time='TIME', rate='RATE', rate_err='ERROR')
-        if 'FRACEXP' not in self.HDU.columns.names:
-            my.printwarn("You are trying to use not correct XMM-Newton light curve "\
-                 "which is not recomended. 'FRACEXP' column will be fake.")
-            self._do_job(colmap, self.keyword_to_read)
-            self.required_columns['fracexp'] = np.ones_like(self.required_columns['time'])
-        else:
-            self._do_job(colmap|{'fracexp':'FRACEXP'}, self.keyword_to_read)
-        
-
-class LCrate():
+class LCrate:
     """Base class for light curves.
     
     Light curve represented as a pair of columns: (TIME, RATE), optionally 
@@ -201,12 +61,12 @@ class LCrate():
     TIMEZERO=0, MJDREF=0.
     """
     
-    _colnames_main = ('time', 'time_err', 'rate', 'rate_err') #important columns
+    _colnames_main = ('time', 'time_err', 'rate', 'rate_err')  # essentual  columns
     _timekeys_default={'MJDREF':0, 'TIMEZERO':0, 'TIMESYS':'UTC', 'TIMEUNIT':'s'}
     _timekeys_allowed_values={'TIMEUNIT':['s','d'],
                               'TIMESYS':['UTC','TT']}
     
-    _precision = 1e-5  #Accuracy for float comparison
+    _precision = 1e-5  # Accuracy for float comparison
     
     def __init__(self, time:ndarray, rate:ndarray, *, time_keywords:dict, 
                  keywords:dict={}, time_err:ndarray=None, rate_err:ndarray=None, 
@@ -215,11 +75,11 @@ class LCrate():
         #     raise ValueError("Unknown type of the light curve. It can be "\
         #             "either 'RATE' or 'COUNTS'")
 
-        _columns={}
-        refshape = (len(time),)  #reference shape
+        _columns = {}
+        refshape = (len(time),)  # reference shape
         
-        #Copy columns. We don't want to update() the dictionary, but we want to compare
-        #possible duplicates. It's for compatibility with subclasses.
+        # Copy columns. We don't want to update() the dictionary, but we want to compare
+        # possible duplicates. It's for compatibility with subclasses.
         for colname,val in tuple(dict(__time=time, rate=rate, rate_err=rate_err, 
                     time_err=time_err).items()) + tuple(extra_columns.items()):
             if val is not None:
@@ -236,22 +96,22 @@ class LCrate():
                 _columns[colname] = val
         self._columns = ColumnStorage(**_columns)
         
-        #Check presence of time keywords
+        # Check presence of time keywords
         if diff:= set(self._timekeys_default).difference(time_keywords):
             raise KeyError(f"Time keywords {diff} not found in 'time_keywords' dict")
         # if diff:=set(time_keywords).difference(self._timekeys_default):
         #     raise KeyError(f"Time keywords {diff} are unknown")
             
-        _timekeys={} #Check validity of time keywords
+        _timekeys={} # Check validity of time keywords
         for key,val in time_keywords.items():
             if key in self._timekeys_allowed_values:
                 if val not in self._timekeys_allowed_values[key]:
                     raise ValueError(f"{key} must be in {self._timekeys_allowed_values[key]}.")
-            _timekeys['__'+key] = val  #Make all the timekeys readonly
+            _timekeys['__'+key] = val  # Make all the timekeys readonly
             
-        self.keywords = keywords.copy()   #Ordinary  python dict
-        self._timekeys = my.ROdict(**_timekeys)
-        _tk = self._timekeys.dict()  #Timekeys with normal names (without '__')
+        self.keywords = keywords.copy()   # Ordinary  python dict
+        self._timekeys = ROdict(**_timekeys)
+        _tk = self._timekeys.dict()  # Timekeys with normal names (without '__')
         self._mjdref = Time(_tk['MJDREF'], format='mjd', scale=_tk['TIMESYS'].lower())
         self._timeunit = getattr(units, _tk['TIMEUNIT'])
         self._timezero = self._mjdref + _tk['TIMEZERO']*self._timeunit
@@ -268,7 +128,7 @@ class LCrate():
         text+=f'Length: {len(self)} bins\n'
         text+='==============================\n'
         cols = [x for x in self._colnames_main if x in self._columns]
-        text += ' | '.join(x.capitalize() for x in cols) #Caption of the table
+        text += ' | '.join(x.capitalize() for x in cols) # Caption of the table
         indices = list(range(len(self)))
         prev = 0
         for i in set(indices[:10] + indices[-10:]):
@@ -279,7 +139,7 @@ class LCrate():
         return text
             
 
-    def get_column(self, colname:str):
+    def get_column(self, colname: str):
         """Return column by its name."""
         if colname in ('_time_err', '_rate_err'):
             return self._columns.get(colname[1:])
@@ -387,7 +247,8 @@ class LCrate():
         raise TypeError("Unsupported type of key: {}.".format(type(arg)))
     
     @__getitem__.register    
-    def _(self, index: int):  #Get one point
+    def _(self, index: int):  # Get one point
+        #TODO
         raise NotImplementedError('__getitem__ for int')
     
     @__getitem__.register    
@@ -489,7 +350,7 @@ class LCrate():
             colname = realcols.get(colname, colname) #Replace, for example, 'time' -> '_timeabs_mjd'
             colerrname = realcols.get(colerrname, colerrname)
             if loc[keyerr] is not None and colerrname is None:
-                my.printwarn("The option '{keyerr}={loc[keyerr]}' will be ignored.")
+                printwarn("The option '{keyerr}={loc[keyerr]}' will be ignored.")
 
             if colerrname:  #Empty '' may be used to omit existing errors
                 ppargs[key] = PlotVector.create_with_errors_symmetric(self.get_column(colname), 
@@ -522,7 +383,7 @@ class LCrate():
         """Check wether two light curves are synchronous."""
         #TODO check time+TIMZERO first and than check timevectors
         # self._check_curve_type(other)
-        printfun =  my.printwarn if not silent else lambda x: None
+        printfun =  printwarn if not silent else lambda x: None
         if len(self) != len(other):
             printfun("Light curves have different lengths")
             return False
@@ -578,46 +439,7 @@ class LCrateBinned(LCrate):
         """Return a new light curve with bins with only nonzero exposure."""
         mask = (self._columns['binwidth'] > 0.0)
         return self[mask]
-    
-    def rebin(self, groups):
-        """Rebin the light curve using list of bin groups."""
-        if not groups:
-            raise ValueError('List of groups cannot be empty')
-        if hasattr(groups, 'lcurve'):
-            if np.any(self.time != groups.lcurve.time):
-                my.printwarn("It seems that this groups was produced for "
-                        "a different light curve.")
-        
-        lc=self.remove_empty()  
-        time = lc._columns['time']
-        rate = lc._columns['rate']
-        width = lc._columns['binwidth']
-        
-        if 'rate_err' not in lc._columns:
-            raise NotImplementedError("Light curves without error column are "\
-                      "not supported yet.")
-        error = lc._columns['rate_err']
-        
-        #new arrays
-        nlen = len(groups)
-        colnames= ['time', 'time_err', 'rate', 'rate_err', 'binwidth']
-        cols = {k:np.zeros(nlen) for k in colnames}
-        #TODO account for existing time_err
-        for i, gr in enumerate(groups):
-            cols['time'][i] = 0.5*(time[gr[0]]+time[gr[-1]])
-            cols['time_err'][i] = time[gr[-1]]-time[gr[0]] + \
-                                       0.5*(width[gr[0]]+width[gr[-1]])
-            bw = width[gr].sum()
-            # rate[i] = (rt1*bw1 + rt2*bw2 + .. rt_n*bw_n)/sum(bw1...bw_n)
-            cols['rate'][i] = np.sum(rate[gr]*width[gr])/bw
-            #sqrt ( (s1*b1/smn(bw))^2 + (s2*b2/smn(bw))^2 + ... ) =
-            # = 1/sum(bw) * sqrt( (s1*b1)^2 + (s2*b2)^2)
-            cols['rate_err'][i] = np.sqrt(np.sum(np.power(error[gr]*width[gr],2)))/bw
-            cols['binwidth'][i]=bw
-            
-        timekeys = self._timekeys.dict()
-        return LCrateBinned(time_keywords=timekeys, keywords=self.keywords, **cols)
-                
+
     def toCounts(self, precision:float=None):
         """Return LCurveCounts of rates can be converted in ints with desired precision."""
         precounts = self._columns._dict['rate']*self._columns._dict['binwidth']
@@ -670,9 +492,9 @@ class LCrateBinnedEven(LCrateBinned):
         """Load an evenly binned light curve from a FITS file."""
         with fits.open(path.fspath) as fts:
             HDU=fts[path.hdu]
-            res, classkeys = main.fits_check_hdu_is_lc(HDU, withclasskeys=True) ##TODO action=exceptions
+            res, classkeys = checks.hdu_is_lc(HDU, withclasskeys=True) ##TODO action=exceptions
             if classkeys['HDUCLAS3'] == 'COUNTS':
-                raise NotImplementedError('Only light curves in rates are '\
+                raise NotImplementedError('Only light curves in rates are '
                           'supported (HDUCLAS3=RATE).')
             data = _LC_read_helper(HDU)  #Parse data from the specific telescope
         data.keywords.update(classkeys)
@@ -827,273 +649,9 @@ LCrateBinned._class_cnt = LCcntBinned
 LCrateBinnedEven._class_cnt = LCcntBinnedEven
 
 
-#### General functions
 
 
-def _bkgration_msg(bkgratio) -> None:
-    """Print warning if bkgratio < 1."""
-    if bkgratio < 1:
-        my.printwarn("The provided bkgratio=S(bkg)/S(src) < 1. Please, make sure that "
-                     "everything is correct.")
 
 
-def read(filepath):
-    """Factory function to read a light curve from FITS."""
-    pass
 
 
-def _rebin_prechecks(src, bkg, bkgratio: float,
-                     attrlist: list, collist: list) -> float:
-    """Make checks before rebinning."""
-    
-    for attr in attrlist:
-        if not hasattr(src, attr):
-            raise TypeError("This light curve cannot be rebined. (It doesn't have the "
-                            f"the '{attr}()' method.)")
-    for curve in (src, bkg):
-        if curve is not None:
-            for col in collist:
-                if col not in curve.colnames:
-                    raise TypeError("This light curve cannot be rebined. (It doesn't have the "
-                                    f"required column '{col}'.)")
-    if bkg:
-        if not src.check_synchronicity(bkg, silent=False):
-            raise TypeError("Can't subtract a non-synchronous light curve.")
-        if bkgratio is None:
-            if bkgratio:= src.get_bkgratio(bkg) is None:
-                raise TypeError(
-                    "Information about collection areas has not "
-                    "been found in the lcurves' metadata. So the 'bkgratio' argument "
-                    "is mandatory.")
-    else:
-        bkgratio = 1
-
-    _bkgration_msg(bkgratio)
-
-    return bkgratio
-
-
-def rebin(lcurve, groups, bkgcurve=None, bkgratio=None):
-    pass
-
-
-def rebin_mincounts(lcurve, mincounts:int, maxbinwidth:float,
-               bkgcurve=None, bkgratio=None, prob=0.9):
-    
-    bkgratio = _rebin_prechecks(lcurve, bkgcurve, bkgratio, 
-                ['getgroups_mincounts'],['counts','binwidth'])
-    
-    groups = lcurve.getgroups_mincounts(mincounts, maxbinwidth)
-    srclc2 = lcurve.rebin(groups)
-    rawcnt = srclc2.counts   # Count in 'raw' light curve
-    bw = srclc2.binwidth
-    
-    extracols={}    # dict for constructor
-    keys = srclc2.keywords
-    
-    if bkgcurve:
-        bkglc2 = lcurve.rebin(groups)
-        bkgcnt = bkglc2.counts
-        counts = rawcnt - bkgcnt/bkgratio
-        extracols['counts_raw'] = rawcnt
-        keys["HDUCLAS2"] = 'NET'
-    else:
-        bkgcnt=np.zeros_like(rawcnt)
-        counts = rawcnt
-    uplim = np.zeros_like(bw)      # Must be np.float!
-    for i in range(len(rawcnt)):
-        uplim[i] = rate_uplimit(rawcnt[i], bkgcnt[i]/bkgratio, bw[i], prob)
-    extracols['rate_uplimits'] = uplim
-        
-    return LCcntBinned(srclc2.time, counts, bw, time_err=srclc2.time_err, 
-                    time_keywords=srclc2.time_keywords, keywords=keys,
-                    extra_columns=extracols)
-
-
-def plot_uplimits(lcurve, *, drop_shorter: float = 0, drop_empty_shorter=0.0,
-                  uplim_below=4.0, plotpair_timeopt=None, returnobj=None, 
-                  print_report=True):
-    
-    _rebin_prechecks(lcurve, None, None, [], ['counts','rate_uplimits'])
-    cnt = lcurve.counts
-    bw = lcurve.binwidth
-    uplim = lcurve.columns['rate_uplimits']
-    nbins = len(cnt)
-    
-    # Two masks to extract normal rates and uplimits
-    mask1, mask2 = [False]*nbins, [False]*nbins
-    counters={k:0 for k in ['empty', 'drop_empty', 'drop_short','uplim', 'normal']}
-    for i in range(nbins):
-        if  cnt[i] == 0:   # Empty bin
-            counters['empty'] +=1
-            if bw[i] <= drop_empty_shorter:
-                counters['drop_empty'] +=1
-                continue
-        if cnt[i] < uplim_below:
-            if bw[i] <= drop_shorter:
-                counters['drop_short'] +=1
-                continue
-            mask2[i] = True
-            counters['uplim'] +=1
-        else:
-            counters['normal'] +=1
-            mask1[i] = True
-            
-    lcrt = lcurve[mask1]
-    lcul = lcurve[mask2]
-    
-    if print_report == True:
-        print("Statistics:")
-        print("Counts total: {:d}".format(cnt.sum()))
-        print("Max counts/bin: {:d}".format(cnt.max()))
-        print("Initial length: {:d} bins".format(nbins))
-        print("Normal bins: {:d}".format(counters['normal']))
-        print("Only uplimins: {:d}".format(counters['uplim']))
-        print("Dropped: {:d}".format(counters['drop_empty']+counters['drop_short']))
-        print("  Empty: {:d}".format(counters['drop_empty']))
-        print("  Short: {:d}".format(counters['drop_short']))
-        
-    if returnobj == 'lcurves':
-        return {'rates':lcrt, 'uplimits':lcul}
-    
-    if not plotpair_timeopt:
-        plotpair_timeopt=dict(abstime=True, dates=False)
-    
-    pprt = lcrt.make_PlotPair(**plotpair_timeopt)
-    _ppul = lcul.make_PlotPair(Y='rate_uplimits', **plotpair_timeopt)
-    ppul = PlotPairUplimits(_ppul.X, _ppul.Y, arrow_lengths='15%', pltopts=_ppul.pltopts)
-    
-    if returnobj == 'plotpairs':
-        return {'rates':pprt, 'uplimits':ppul}
-    else:
-        import matplotlib.pyplot as plt
-        ppul.oplot(plt, color='green')
-        pprt.plot(plt)
-        
-        
-
-
-#### legacy #################### 
-
-#
-# def _basic_checks(hdu, *, action=Actions.EXCEPTION, refkeys=None):
-#     """Check the presence of the mandatory keywords for evenly binned light curve."""
-#     res={}
-#     for key in ('TIMEPIXR', 'TIMEDEL', 'TIMEZERO'):
-#         if key not in hdu.header:
-#             my._do_action(action, f"Mandatory keyword f'{key}' is not found.",
-#                 exception_class=KeyError)
-#         res[key] = hdu.header[key]
-#
-#     return res
-
-
-#
-# def rebin_continues_intervals(objfile:str, bkgfile:str=None, *, bkgscale:float=None):
-#     """Rebin light curve to have one point per each countinuos interval.
-#
-#     Parameters
-#     ----------
-#     objfile : str
-#         Path to the source light curve FITS file.
-#     bkgfile : str, optional
-#         Path to the background light curve FITS file. The default is None
-#     bkgscale : float, optional
-#         Background correction factor, i.e. the ratio of areas of the source
-#         and background apertures. The default is None.
-#
-#     Returns
-#     -------
-#     None.
-#
-#     """
-#
-#
-#     with fits.open(objfile) as objfts:
-#         keywords=_make_checks(objfile)
-#         if keywords['TIMEPIXR']  != 0.5:  ##TODOMove to make_checks
-#             raise NotImplementedError('Only TIMEPIXR=0.5 is supported yet.')
-#         step = keywords['TIMEDEL']
-#         time=objfts[1].data['Time']
-#         rate=objfts[1].data['Rate']
-#         err=objfts[1].data['Error']
-#
-#     if bkgfile:
-#         if bkgscale is None:
-#             raise TypeError("'bkgfile' argument requires the 'bkgscale' but it is None.")
-#         with fits.open(bkgfile) as bkgfts:
-#             b_keywords=_make_checks(objfile)
-#             for key in keywords:  ## TODO Move this loop to _make_checks refkeys
-#                 if keywords[key] != b_keywords[key]:
-#                     raise ValueError("The background light curve keyword has "
-#                         f"different value of the '{key}' keyword.")
-#             b_rate=bkgfts[1].data['Rate']
-#             b_err=bkgfts[1].data['Error']
-#
-#     groups_raw = _make_groups(time, step)
-#     groups=[]
-#     for gr in groups_raw:
-#       if len(gr)>1:
-#         groups.append(gr)
-#
-#     l=len(groups)
-#     x=np.zeros(l)
-#     ex=np.zeros(l)
-#     yraw=np.zeros(l)
-#     eyraw=np.zeros(l)
-#     ynet=np.zeros(l)
-#     eynet=np.zeros(l)
-#     ybkg=np.zeros(l)
-#     eybkg=np.zeros(l)
-#     i=0
-#     for i in range(l):
-#         gr=groups[i]
-#
-#         # print('%d:' % i)
-#         # print(gr)
-#
-#         # if i==0: print(time[gr])
-#         x1=time[gr[0]]
-#         x2=time[gr[-1]]
-#         x[i]=0.5*(x1+x2)
-#         ex[i]=0.5*(x2-x1+step)       #  0.5* ( x2+0.5*STEP - (x1-0.5*STEP) )
-#         yraw[i]=np.mean(rate[gr])
-#         ybkg[i]=np.mean(b_rate[gr])*bkgscale
-#         eyraw[i]=np.sqrt(np.sum( np.power(err[gr],2) ))/len(gr)   # 1/n * sqrt ( s1^2 + s2^2 + ... sn^2 )
-#         eybkg[i]=np.sqrt(np.sum( np.power(b_err[gr],2) ))/len(gr)*bkgscale
-#         i+=1
-#
-#     ynet=yraw-ybkg
-#     eynet=np.sqrt(eyraw**2+eybkg**2)
-#
-#     i_min=np.argmin(ynet)
-#     i_max=np.argmax(ynet)
-#     print(ynet[i_min],ynet[i_max])
-#     print('Min={:2.3f} at {:e} ({:d} points), Max={:2.3f} at {:e} ({:d} points)'.format(np.amin(ynet),x[i_min],len(groups[i_min]),np.amax(ynet),x[i_max],len(groups[i_max])))
-#
-#     res={}
-#     for var in ['x','ex','yraw','ybkg','ynet','eyraw','eybkg','eynet']:
-#       res[var]=locals()[var]
-#     return res
-#
-# def rebin_smart(objfile:str, mincounts:int, maxbinlength:float):
-#     from math import sqrt
-#     with fits.open(objfile) as objfts:
-#         keywords=_basic_checks(objfts[1])
-#         step = keywords['TIMEDEL']
-#         time  = objfts[1].data['Time']
-#         rate  = objfts[1].data['Rate']
-#         frexp = objfts[1].data['Fracexp']
-#
-#     newlc=[]
-#     binwidth = buf = t1 = t2 = 0
-#
-#
-#
-#     res={}
-#     res['x']= np.array([pt['time'] for pt in newlc])
-#     res['yraw']= np.array([pt['rate'] for pt in newlc])
-#     res['eyraw']= np.array([pt['error'] for pt in newlc])
-#     return res
-#
-#

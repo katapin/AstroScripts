@@ -9,7 +9,7 @@ def fits_keywords_getmany(HDU, keynames: list[str], defaults: dict = None, *,
                           action=Actions.EXCEPTION) -> dict[str]:
     """Read multiple keyword from the FITS header.
 
-    The aim of this function to provide a functional analogues to dict.get()
+    The objective of this function is to provide a functional analogues to dict.get()
     for headers' keywords.
 
     :param HDU: One object from the list obtained via astropy.io.fits.open().
@@ -18,7 +18,7 @@ def fits_keywords_getmany(HDU, keynames: list[str], defaults: dict = None, *,
         The default is None.
     :param action: Perform 'action' if the keyword is missing both in the
         header and in the defaults. The default is EXCEPTION
-    :return: dict with keywords and their values
+    :return: dict with the claimed FITS keywords and their values
     """
     result={}
     for key in keynames:
