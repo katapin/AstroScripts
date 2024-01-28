@@ -14,31 +14,6 @@ from .main import FilePathAbs
 from .external import _check_result_file_appeared
 
 
-def _vec_checks(vec, vecname=None, refshape=None, *, none_is_allowed=False, 
-                from_numbers=False) -> ndarray | None:
-    """Check if ndarary can be created from the input argument."""
-    if vec is None:
-        if none_is_allowed == True:
-            return None
-        else:
-            raise ValueError("The vector {} cannot be None.".format(
-                   "'"+vecname+"' " if vecname else ''))
-            
-    if from_numbers == True and refshape:  # Stretch a number to vector
-        if not isinstance(vec, (float, int)):
-            vec = np.ones(refshape)*vec
-            return vec
-    if not isinstance(vec, (list, tuple, ndarray)):
-        raise TypeError("Data columns must be of a sequence (list, tuple, etc.) "
-                        "or the numpy array type.")
-    if len(vec) == 0:
-        raise ValueError("The vector {}can be None but cannot be empty.".format(
-                         "'"+vecname+"' " if vecname else ''))
-    if isinstance(vec, (list, tuple)):  #Convert to ndarray
-        vec = np.array(vec)
-    if refshape and (vec.shape != refshape) or (vec.ndim != 1): 
-        raise ValueError("All the arrays must be 1D of the the same length.")
-    return vec
 
 
 class PlotPoint(float):
