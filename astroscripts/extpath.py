@@ -13,6 +13,7 @@ __all__ = [
     "ExtPathAbs"
 ]
 
+
 class ExtFileName:
     """Extended filename to store also hdu number and columns of FITS/ASCII tables.
 
@@ -25,7 +26,7 @@ class ExtFileName:
     returned by __fspath__, and the magic __str__ may have any output.
     """
 
-    def __init__(self, name: str, hdu: Union[int, str] = None, filter=None):
+    def __init__(self, name: str, hdu: int | str = None, filter=None):
         self._name = self._name_check(name)
         self.hdu = hdu
         self.filter = filter
@@ -54,7 +55,7 @@ class ExtFileName:
             self.__class__.__name__, self._name, self._hdu, self.filter)
 
     def __fspath__(self):
-        """Return filename for os.fspath()."""
+        """Implement os.PathLike protocol."""
         return self._name
 
     def __rtruediv__(self, other):
