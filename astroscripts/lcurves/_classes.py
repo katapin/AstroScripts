@@ -3,8 +3,9 @@
 import numpy as np
 from numpy import ndarray
 from astropy.io import fits
-from astropy.time import Time as apTime
-from astropy import units
+from astropy.time import (Time as apyTime,
+                          TimeDelta as apyTimeDelta)
+# from astropy import units
 from typing import List, Union
 from functools import singledispatchmethod
 from mypythonlib import printwarn
@@ -30,6 +31,7 @@ __all__ = [
     "LCcntBinnedEven"
 ]
 
+
 def _check_tunits(txt: str) -> str:
     """Check whether the string represent valid type units."""
     if not isinstance(txt, str):
@@ -38,21 +40,47 @@ def _check_tunits(txt: str) -> str:
         raise ValueError(f"Unknown units: '{txt}'.")
     return txt
 
-class Time:
-    def __init__(self, ticks, units: str, timezero: apTime = None):
-        if timezero is not None and not isinstance(timezero, apTime):
-            raise TypeError(f"The 'timezero' must be a {type(apTime).__name__} object.")
+
+class TimeVector:
+    """Class to store time data of time series.
+
+    :param ticks:  numpy array or other iterable with time stamps
+        representing time since 'timezero'. Must be sorted in
+        ascending order.
+    :param units:  units of time stamps. Either second (s) or days (d).
+    :param timezero:  astropy.time.Time object or None.
+
+    Since timezero stored in the astropy object, this class
+    naturally treats times in different time systems.
+    """
+
+    _precision = 1e-9    # float comparison, 1ns is enough
+
+    def __init__(self, ticks, units: str, timezero: apyTime = None):
+        if timezero is not None and not isinstance(timezero, apyTime):
+            raise TypeError(f"The 'timezero' argument must be a "
+                            f"{type(apyTime).__name__} object.")
 
         self._timezero = timezero
         vec = _make_vector(
             ticks, vecname='ticks', none_is_allowed=False, from_numbers=False
-        )
-        
+        )  # make numpy arrray
+
+        # Check the ticks are monotonically increase
         if not np.all(np.diff(vec) >= 0):
             raise ValueError("Time ticks must be only in ascending order.")
 
+        # Check whether time units are days or seconds
         if _check_tunits(units) == 'd':
             vec = vec*86400   # Convert to seconds
+
+        # Normalize time vector
+        if timezero:
+            if vec[0] != 0:
+                dt = vec[0]
+                vec = vec - dt
+                # Use of '+=' doesn't guarantee that object will be new
+                self._timezero = self._timezero + apyTimeDelta(dt, format='sec')
 
         self._ticks = vec
 
@@ -60,10 +88,41 @@ class Time:
         cls = self.__class__
         if not isinstance(other, cls):
             return NotImplemented
-        return self._ticks == other._ticks and self._timezero == other._timezero
+
+        tzcheck = False
+        if all(x is not None for x in (self._timezero, other._timezero)):
+            tzcheck = abs((self._timezero-other._timezero).sec) < self._precision
+        elif all(x is None for x in (self._timezero, other._timezero)):
+            tzcheck = True   # both None
+
+        return np.all(self._ticks == other._ticks) and tzcheck
 
     def __hash__(self):
         return hash((self._timezero, self._ticks))
+
+    def __repr__(self):
+        if self._timezero is not None:
+            tz = f"'MJD{self._timezero.mjd}'"
+        else:
+            tz = "None"
+        clsname = self.__class__.__name__
+        return f"{clsname}(timezero={tz}, ticks={self._ticks!r}"
+
+    @property
+    def timezero(self):
+        """Return timezero object."""
+        # TODO make sure that astropy.Time objects are immutable
+        return self._timezero
+
+    @property
+    def tickss(self):
+        """Return time stamps in seconds."""
+        return self._ticks.copy()   # Return a copy
+
+    @property
+    def ticksd(self):
+        """Return time stamps in days."""
+        return self._ticks/86400    # It's already a copy
 
 
 class ColumnStorage(ROdict):
@@ -148,7 +207,7 @@ class LCrate:
         self.keywords = keywords.copy()   # Ordinary  python dict
         self._timekeys = ROdict(**_timekeys)
         _tk = self._timekeys.dict()  # Timekeys with normal names (without '__')
-        self._mjdref = Time(_tk['MJDREF'], format='mjd', scale=_tk['TIMESYS'].lower())
+        self._mjdref = TimeVector(_tk['MJDREF'], format='mjd', scale=_tk['TIMESYS'].lower())
         self._timeunit = getattr(units, _tk['TIMEUNIT'])
         self._timezero = self._mjdref + _tk['TIMEZERO']*self._timeunit
    
