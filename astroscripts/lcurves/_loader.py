@@ -3,11 +3,34 @@
 import numpy as np
 from mypythonlib import Actions, printwarn
 from ..other import fits_keywords_getmany
-from ._classes import LCrateBinnedEven
+# from ._classes import LCrateBinnedEven
 
 #TODO list
 # 1) Steal the astropy.io.ascii.load() implemetation of the loading factory
 # 2) Switch from custom warnings to Python stdlib warnings
+
+_registered_loaders={}
+
+
+def register(name: str):
+    """Register class as a lc-loader."""
+    def decorator(cls: type):
+        _registered_loaders[name] = cls
+        return cls
+    return decorator
+
+class BaseLoader:
+    def me(self):
+        print('Im', self.__class__)
+
+@register('XMM')
+class XmmLoader(BaseLoader):
+    pass
+
+@register('SWIFT')
+class SwiftLoader(BaseLoader):
+
+
 
 class _LC_read_helper():
     """Provide telescope dependent column mapping for LCurveBinnedEven.from_fits()."""
@@ -31,8 +54,8 @@ class _LC_read_helper():
                               if colname not in colmap.values()}
 
         # Read time keywords (mandatory) from FITS header
-        self.timekeys = (fits_keywords_getmany(self.HDU, LCrateBinnedEven._timekeys_default,
-                                                    self.absent_keywords, action=Actions.EXCEPTION))
+        # self.timekeys = (fits_keywords_getmany(self.HDU, LCrateBinnedEven._timekeys_default,
+        #                                             self.absent_keywords, action=Actions.EXCEPTION))
         self.TIMEDEL = self.timekeys['TIMEDEL']
 
         # Read optiocal keywords from FITS header

@@ -3,7 +3,7 @@
 import numpy as np
 from numpy import ndarray
 from astropy.io import fits
-from astropy.time import Time
+from astropy.time import Time as apTime
 from astropy import units
 from typing import List, Union
 from functools import singledispatchmethod
@@ -13,6 +13,7 @@ from .. import fitschecks as checks
 from ..plot import PlotPair, PlotVector
 from ..extpath import ExtPath
 from ._common import LCError
+from .._internal.helpers import _make_vector
 from ._loader import _LC_read_helper
 
 #TODO list
@@ -28,6 +29,41 @@ __all__ = [
     "LCcntBinned",
     "LCcntBinnedEven"
 ]
+
+def _check_tunits(txt: str) -> str:
+    """Check whether the string represent valid type units."""
+    if not isinstance(txt, str):
+        raise TypeError('Time units must of the string type.')
+    if txt not in ('d', 's'):
+        raise ValueError(f"Unknown units: '{txt}'.")
+    return txt
+
+class Time:
+    def __init__(self, ticks, units: str, timezero: apTime = None):
+        if timezero is not None and not isinstance(timezero, apTime):
+            raise TypeError(f"The 'timezero' must be a {type(apTime).__name__} object.")
+
+        self._timezero = timezero
+        vec = _make_vector(
+            ticks, vecname='ticks', none_is_allowed=False, from_numbers=False
+        )
+        
+        if not np.all(np.diff(vec) >= 0):
+            raise ValueError("Time ticks must be only in ascending order.")
+
+        if _check_tunits(units) == 'd':
+            vec = vec*86400   # Convert to seconds
+
+        self._ticks = vec
+
+    def __eq__(self, other):
+        cls = self.__class__
+        if not isinstance(other, cls):
+            return NotImplemented
+        return self._ticks == other._ticks and self._timezero == other._timezero
+
+    def __hash__(self):
+        return hash((self._timezero, self._ticks))
 
 
 class ColumnStorage(ROdict):
