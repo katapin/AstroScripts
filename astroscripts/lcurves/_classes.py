@@ -2,6 +2,7 @@
 
 import numpy as np
 from numpy import ndarray
+from numpy.typing import ArrayLike
 from astropy.io import fits
 from astropy.time import (Time as apyTime,
                           TimeDelta as apyTimeDelta)
@@ -56,7 +57,7 @@ class TimeVector:
 
     _precision = 1e-9    # float comparison, 1ns is enough
 
-    def __init__(self, ticks, units: str, timezero: apyTime = None):
+    def __init__(self, ticks: ArrayLike, units: str, timezero: apyTime = None):
         if timezero is not None and not isinstance(timezero, apyTime):
             raise TypeError(f"The 'timezero' argument must be a "
                             f"{type(apyTime).__name__} object.")
@@ -125,26 +126,6 @@ class TimeVector:
         return self._ticks/86400    # It's already a copy
 
 
-class ColumnStorage(ROdict):
-    """Read-only dict to store ndarray vectors."""
-    
-    def _item_change_existing_as_normal(self, key, val):
-        self._dict[key][:] = val
-        
-    def _item_get_missing_as_normal(self, key):
-        raise KeyError(f"Column '{key}' doesn't exist.")
-
-    def _item_del_missing_as_normal(self, key):
-        raise KeyError(f"Column '{key}' doesn't exist.")
-
-    def __str__(self):
-        """Return string representation."""
-        text = self.__class__.__name__ + ': {\n'
-        lst=[]
-        for k,v in self._dict.items():
-            lst.append( (f"'{k}'*:" if k in self._readonly else f"'{k}':") +\
-                      repr(v))
-        return text + '\n'.join(lst) +' }'
 
 
 class LCrate:
