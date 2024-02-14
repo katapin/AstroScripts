@@ -2,12 +2,14 @@
 
 import numpy as np
 from numpy import ndarray
-from numpy.typing import ArrayLike
+from numpy.typing import ArrayLike, NDArray
 from astropy.io import fits
 from astropy.time import (Time as apyTime,
                           TimeDelta as apyTimeDelta)
 # from astropy import units
-from typing import List, Union
+from typing import List, Union, Self
+from enum import StrEnum
+
 from functools import singledispatchmethod
 from mypythonlib import printwarn
 from mypythonlib.collections import ROdict
@@ -15,7 +17,12 @@ from .. import fitschecks as checks
 from ..plot import PlotPair, PlotVector
 from ..extpath import ExtPath
 from ._common import LCError
-from .._internal.helpers import _make_vector
+from .._internal.columnbased import (
+    _make_vector,
+    ColumnBasedMinimal,
+    ColumnBased
+)
+
 from ._loader import _LC_read_helper
 
 #TODO list
@@ -33,16 +40,28 @@ __all__ = [
 ]
 
 
-def _check_tunits(txt: str) -> str:
-    """Check whether the string represent valid type units."""
-    if not isinstance(txt, str):
-        raise TypeError('Time units must of the string type.')
-    if txt not in ('d', 's'):
-        raise ValueError(f"Unknown units: '{txt}'.")
-    return txt
+# def _check_tunits(txt: str) -> str:
+#     """Check whether the string represent valid type units."""
+#     if not isinstance(txt, str):
+#         raise TypeError('Time units must of the string type.')
+#     if txt not in ('d', 's'):
+#         raise ValueError(f"Unknown units: '{txt}'.")
+#     return txt
+
+class TUnits(StrEnum):
+    """Allowed units for TimeVector."""
+    day = 'd'
+    sec = 's'
 
 
-class TimeVector:
+class LCType(StrEnum):
+    """Types of light curves' data column."""
+    rate = 'rate'
+    counts = 'counts'
+    mag = 'mag'
+
+
+class TimeVector(ColumnBasedMinimal):
     """Class to store time data of time series.
 
     :param ticks:  numpy array or other iterable with time stamps
@@ -55,51 +74,55 @@ class TimeVector:
     naturally treats times in different time systems.
     """
 
-    _precision = 1e-9    # float comparison, 1ns is enough
-
-    def __init__(self, ticks: ArrayLike, units: str, timezero: apyTime = None):
+    def __init__(self, ticks: ArrayLike, units: TUnits | str,
+                 timezero: apyTime = None):
         if timezero is not None and not isinstance(timezero, apyTime):
             raise TypeError(f"The 'timezero' argument must be a "
-                            f"{type(apyTime).__name__} object.")
+                            f"{type(apyTime).__name__} object or None.")
 
         self._timezero = timezero
-        vec = _make_vector(
+        vec: ndarray = _make_vector(
             ticks, vecname='ticks', none_is_allowed=False, from_numbers=False
-        )  # make numpy arrray
+        )  # make a numpy arrray
 
         # Check the ticks are monotonically increase
         if not np.all(np.diff(vec) >= 0):
             raise ValueError("Time ticks must be only in ascending order.")
 
         # Check whether time units are days or seconds
-        if _check_tunits(units) == 'd':
+        if TUnits(units) is TUnits.day:
             vec = vec*86400   # Convert to seconds
 
-        # Normalize time vector
-        if timezero:
-            if vec[0] != 0:
-                dt = vec[0]
-                vec = vec - dt
-                # Use of '+=' doesn't guarantee that object will be new
+        super().__init__({'ticks': vec})
+        self._rebuild_hook()
+
+    def _rebuild_hook(self):
+        """To be called after slicing to normalize the 'ticks' vector."""
+        # Shift ticks to zero
+        ticks = self._columns['ticks']
+        if self._timezero and ticks.size > 0:
+            if ticks[0] != 0:
+                dt = ticks[0]
+                self._columns['ticks'] = ticks - dt
                 self._timezero = self._timezero + apyTimeDelta(dt, format='sec')
+        self._ticks = self._columns['ticks']     # make a shortcut
 
-        self._ticks = vec
+    def __eq__(self, other: Self) -> bool:
+        # cls = self.__class__
+        # if not isinstance(other, cls):
+        #     return NotImplemented
 
-    def __eq__(self, other):
-        cls = self.__class__
-        if not isinstance(other, cls):
-            return NotImplemented
-
-        tzcheck = False
-        if all(x is not None for x in (self._timezero, other._timezero)):
-            tzcheck = abs((self._timezero-other._timezero).sec) < self._precision
-        elif all(x is None for x in (self._timezero, other._timezero)):
+        if (self._timezero is not None) and (other._timezero is not None):
+            tzcheck = self._timezero.isclose(other._timezero)
+        elif self._timezero is other._timezero is None:
             tzcheck = True   # both None
+        else:  # One is None but the other is not
+            return False
 
-        return np.all(self._ticks == other._ticks) and tzcheck
+        return super().__eq__(other) and tzcheck
 
-    def __hash__(self):
-        return hash((self._timezero, self._ticks))
+    # def __hash__(self):
+    #     return hash((self._timezero, self._ticks))
 
     def __repr__(self):
         if self._timezero is not None:
@@ -109,6 +132,15 @@ class TimeVector:
         clsname = self.__class__.__name__
         return f"{clsname}(timezero={tz}, ticks={self._ticks!r}"
 
+    def seconds_from(self, time: apyTime):
+        """Return timestamps in seconds starting from 'time' (copy)."""
+        dt = 0 if time is self._timezero else (self._timezero - time).sec
+        return self._ticks + dt   # It's always a new ndarray
+
+    def days_from(self, time: apyTime):
+        """Return timestamps in days starting from 'time' (copy)."""
+        return self.seconds_from(time)/86400
+
     @property
     def timezero(self):
         """Return timezero object."""
@@ -117,13 +149,76 @@ class TimeVector:
 
     @property
     def tickss(self):
-        """Return time stamps in seconds."""
-        return self._ticks.copy()   # Return a copy
+        """Return time stamps in seconds (copy)."""
+        return self.seconds_from(self._timezero)
 
     @property
     def ticksd(self):
-        """Return time stamps in days."""
-        return self._ticks/86400    # It's already a copy
+        """Return time stamps in days (copy)."""
+        return self.days_from(self._timezero)
+
+class LCurve(ColumnBased):
+
+    def __init__(self, time: TimeVector, data: ArrayLike, *, lctype: LCType | str,
+                 tunits: TUnits | str, time_err: ArrayLike = None,
+                 data_err: ArrayLike = None, binwidth: ArrayLike = None,
+                 extra_columns: dict[str, ArrayLike] = None,
+                 meta: dict = None):
+        _loc = locals()
+
+        self._lctype = LCType(lctype)
+        self._tunits = TUnits(tunits)
+        self._timevec = time
+
+        reflen = len(time)
+        _pd = {k: _make_vector(_loc[k], vecname=k, reflen=reflen) for
+               k in ('time_err', 'data', 'data_err', 'binwidth')
+               if _loc[k] is not None}  # Dict for protected columns
+
+        if extra_columns is not None:
+            _pd |= {k: _make_vector(extra_columns[k], vecname=k, reflen=reflen)
+                    for k in extra_columns}
+
+        super().__init__(columns=None, pcolumns=_pd)
+
+    @property
+    def lctype(self):
+        return self._lctype
+
+    @property
+    def timevec(self):
+        """Return time vector object."""
+        return self._timevec
+
+    def time_from(self, time: apyTime):
+        """Return timestamps since 'time'."""
+        return {
+            TUnits.sec: self._timevec.seconds_from,
+            TUnits.day: self._timevec.days_from
+        }[self._tunits](time)
+
+    @property
+    def time(self):
+        """Return timestamps."""
+        return self.time_from(self._timevec.timezero)
+
+    @property
+    def tunits(self):
+        return self._tunits
+
+    @tunits.setter
+    def tunits(self, val: TUnits | str):
+        if (enval := TUnits(val)) is self._tunits:
+            return
+        fact = {
+            TUnits.sec: 86400,
+            TUnits.day: 1/86400
+        }  # factor
+        self._tunits = enval
+        for colname in ('time_err', 'binwidth'):
+            if colname in self._columns:
+                self._columns[colname] *= fact[enval]
+
 
 
 
