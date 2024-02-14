@@ -74,13 +74,9 @@ class TimeVector(ColumnBasedMinimal):
     naturally treats times in different time systems.
     """
 
-    def __init__(self, ticks: ArrayLike, units: TUnits | str,
+    def __init__(self, ticks: ArrayLike, units: TUnits,
                  timezero: apyTime = None):
-        if timezero is not None and not isinstance(timezero, apyTime):
-            raise TypeError(f"The 'timezero' argument must be a "
-                            f"{type(apyTime).__name__} object or None.")
 
-        self._timezero = timezero
         vec: ndarray = _make_vector(
             ticks, vecname='ticks', none_is_allowed=False, from_numbers=False
         )  # make a numpy arrray
@@ -91,10 +87,10 @@ class TimeVector(ColumnBasedMinimal):
 
         # Check whether time units are days or seconds
         if TUnits(units) is TUnits.day:
-            vec = vec*86400   # Convert to seconds
+            vec = vec*86400     # ticks are always stored in seconds
 
         super().__init__({'ticks': vec})
-        self._rebuild_hook()
+        self.timezero = timezero   # It will also call self._rebuild_hook()
 
     def _rebuild_hook(self):
         """To be called after slicing to normalize the 'ticks' vector."""
@@ -108,21 +104,13 @@ class TimeVector(ColumnBasedMinimal):
         self._ticks = self._columns['ticks']     # make a shortcut
 
     def __eq__(self, other: Self) -> bool:
-        # cls = self.__class__
-        # if not isinstance(other, cls):
-        #     return NotImplemented
-
         if (self._timezero is not None) and (other._timezero is not None):
             tzcheck = self._timezero.isclose(other._timezero)
         elif self._timezero is other._timezero is None:
             tzcheck = True   # both None
         else:  # One is None but the other is not
             return False
-
         return super().__eq__(other) and tzcheck
-
-    # def __hash__(self):
-    #     return hash((self._timezero, self._ticks))
 
     def __repr__(self):
         if self._timezero is not None:
@@ -132,14 +120,32 @@ class TimeVector(ColumnBasedMinimal):
         clsname = self.__class__.__name__
         return f"{clsname}(timezero={tz}, ticks={self._ticks!r}"
 
+    def ticks_from(self, time: apyTime, units: TUnits):
+        """Return timestamps referenced to 'time' in desired time units."""
+        units = TUnits(units)  # Raise an error if the string is incorrect
+        if time is self._timezero:  # 'None is None' is also here
+            dt = 0
+        else:
+            if self._timezero is None:
+                raise TypeError("The light curve doesn't the 'timezero' reference.")
+            dt = (self._timezero - time).sec
+        ticks = self._ticks + dt     # It's a new ndarray even if dt is 0
+        if units is TUnits.sec:
+            return ticks
+        else:  # days
+            return ticks/86400
+
     def seconds_from(self, time: apyTime):
-        """Return timestamps in seconds starting from 'time' (copy)."""
-        dt = 0 if time is self._timezero else (self._timezero - time).sec
-        return self._ticks + dt   # It's always a new ndarray
+        """Return timestamps in seconds referenced to 'time'."""
+        return self.ticks_from(time, TUnits.sec)
 
     def days_from(self, time: apyTime):
-        """Return timestamps in days starting from 'time' (copy)."""
-        return self.seconds_from(time)/86400
+        """Return timestamps in days referenced to 'time'."""
+        return self.ticks_from(time, TUnits.day)
+
+    def get_ticks(self, units: TUnits):
+        """Return ticks in the desired units"""
+        return self.ticks_from(self._timezero, units)
 
     @property
     def timezero(self):
@@ -147,20 +153,30 @@ class TimeVector(ColumnBasedMinimal):
         # TODO make sure that astropy.Time objects are immutable
         return self._timezero
 
+    @timezero.setter
+    def timezero(self, val: apyTime):
+        if val is not None and not isinstance(val, apyTime):
+            raise TypeError(f"The 'timezero' argument must be a "
+                            f"{type(apyTime).__name__} object or None.")
+        self._timezero = val
+        self._rebuild_hook()  # Shift ticks
+
+
     @property
     def tickss(self):
         """Return time stamps in seconds (copy)."""
-        return self.seconds_from(self._timezero)
+        return self.get_ticks(TUnits.sec)
 
     @property
     def ticksd(self):
         """Return time stamps in days (copy)."""
-        return self.days_from(self._timezero)
+        return self.get_ticks(TUnits.day)
+
 
 class LCurve(ColumnBased):
 
-    def __init__(self, timevec: TimeVector, data: ArrayLike, *, lctype: LCType | str,
-                 tunits: TUnits | str, time_err: ArrayLike = None,
+    def __init__(self, timevec: TimeVector, data: ArrayLike, *, lctype: LCType,
+                 tunits: TUnits, time_err: ArrayLike = None,
                  data_err: ArrayLike = None, binwidth: ArrayLike = None,
                  extra_columns: dict[str, ArrayLike] = None,
                  meta: dict = None):
@@ -183,7 +199,7 @@ class LCurve(ColumnBased):
 
     @classmethod
     def from_columns(cls, columns: dict[str, ArrayLike], *, timezero: apyTime,
-                     lctype: LCType | str, tunits: TUnits | str) -> Self:
+                     lctype: LCType, tunits: TUnits) -> Self:
         """Create light curve object from dict of columns."""
         time = columns.pop('time')
         timevec = TimeVector(time, units=tunits, timezero=timezero)
@@ -200,10 +216,7 @@ class LCurve(ColumnBased):
 
     def time_from(self, time: apyTime):
         """Return timestamps since 'time'."""
-        return {
-            TUnits.sec: self._timevec.seconds_from,
-            TUnits.day: self._timevec.days_from
-        }[self._tunits](time)
+        return self._timevec.ticks_from(time, self._tunits)
 
     @property
     def time(self):
@@ -215,7 +228,7 @@ class LCurve(ColumnBased):
         return self._tunits
 
     @tunits.setter
-    def tunits(self, val: TUnits | str):
+    def tunits(self, val: TUnits):
         if (enval := TUnits(val)) is self._tunits:
             return
         fact = {

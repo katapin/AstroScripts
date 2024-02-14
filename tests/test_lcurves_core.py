@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 from numpy import array
 from astropy.time import Time, TimeDelta
-from astroscripts.lcurves import _classes as lccore
+from astroscripts.lcurves import core as lccore
 
 
 tz = Time(60000, format='mjd')  # default timezero

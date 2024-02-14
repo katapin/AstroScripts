@@ -18,6 +18,7 @@ def _make_vector(vec: ArrayLike | None, vecname: str = None, *,
 
     Takes an iterable object or a number, returns an ndarray with own data.
     """
+    # TODO: remove none_is_allowed argument, may be it's better to craete an array of NaNs?
     _vecname = f"'{vecname}' " if vecname else ''
     _typertext = f"Data column {_vecname}must be a sequence (list, tuple, etc.) of numbers "\
                  "or a numpy array"
