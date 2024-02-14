@@ -104,7 +104,7 @@ def _make_vector(vec: ArrayLike | None, vecname: str = None, *,
 #         return self.Proxy(obj)
 
 
-class _ColumnBasedMinimal(ABC):
+class ColumnBasedMinimal(ABC):
     """Abstract class for column-based objects like light curves,
     spectra, plots, etc. Provide sampling via masks and
     slices. It assumes that all the passed columns are
@@ -123,14 +123,18 @@ class _ColumnBasedMinimal(ABC):
         else:  # There are no columns
             return 0
 
-    def __eq__(self, other: Self):
+    def __eq__(self, other: Self) -> bool:
         if type(self) is not type(other):
             return NotImplemented
-        return (
-            self._columns.keys() == other._columns.keys() and        # test keys
-            all(np.all(np.isclose(self._columns[name], other._columns[name]))  # and test each column
-                for name in self._columns)
-        )
+        if self._columns.keys() != other._columns.keys():
+            return False
+        for colname in self._columns:
+            c1, c2 = self._columns[colname], other._columns[colname]
+            if len(c1) != len(c2):
+                return False
+            if not np.all(np.isclose(c1, c2)):
+                return False
+        return True
 
     @singledispatchmethod
     def __getitem__(self, arg):
@@ -162,7 +166,7 @@ class _ColumnBasedMinimal(ABC):
         # It's fantastic but self.__proxy.owner = self is treated correctly!
         return deepcopy(self)
 
-class _ColumnBased(_ColumnBasedMinimal):
+class ColumnBased(ColumnBasedMinimal):
     """Extends ColumnBasedMinimal. Provide access to columns
     through dynamic attributes of the same name and through
     dedicated self.columns object. The latter method returns

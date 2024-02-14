@@ -1,12 +1,11 @@
 import pytest
 import numpy as np
 from numpy import array
-from astroscripts._internal._columnbased import (
+from astroscripts._internal.columnbased import (
     _make_vector,
-    _ColumnBased,
-    _ColumnBasedMinimal,
+    ColumnBased,
+    ColumnBasedMinimal,
 )
-
 
 class Test_make_vector():
 
@@ -59,8 +58,8 @@ def mkcols(names: list[str], data):
             for n,a in zip(names, data)}
 
 
-class Test_ColumnBasedMinimal():
-    _ColumnBasedMinimal.__abstractmethods__ = set()
+class TestColumnBasedMinimal():
+    ColumnBasedMinimal.__abstractmethods__ = set()
 
     @pytest.mark.parametrize(
         "cols, res",
@@ -70,7 +69,7 @@ class Test_ColumnBasedMinimal():
         ]
     )
     def test_len(self, cols, res):
-        cbm = _ColumnBasedMinimal(cols)
+        cbm = ColumnBasedMinimal(cols)
         assert len(cbm) == res
 
     @pytest.mark.parametrize(
@@ -80,7 +79,7 @@ class Test_ColumnBasedMinimal():
         ]
     )
     def test_getitem_point(self, cols, index, res):
-        cbm = _ColumnBasedMinimal(cols)
+        cbm = ColumnBasedMinimal(cols)
         assert cbm[index] == res
 
     @pytest.mark.parametrize(
@@ -104,8 +103,8 @@ class Test_ColumnBasedMinimal():
         ]
     )
     def test_getitem_subsample(self, cols, mask, res):
-        cbm = _ColumnBasedMinimal(cols)
-        cmb2 = _ColumnBasedMinimal(res)
+        cbm = ColumnBasedMinimal(cols)
+        cmb2 = ColumnBasedMinimal(res)
         new = cbm[mask]
         assert all(list(new._columns['X']) == res['X'])
         assert new == cmb2
@@ -116,8 +115,8 @@ class Test_ColumnBasedMinimal():
 
 
 
-class Test_ColumnBased():
-    _ColumnBased.__abstractmethods__ = set()
+class TestColumnBased():
+    ColumnBased.__abstractmethods__ = set()
     @pytest.mark.parametrize(
         "cols, pcols",
         [
@@ -127,7 +126,7 @@ class Test_ColumnBased():
         ]
     )
     def test_init(self, cols, pcols):
-        cb = _ColumnBased(cols, pcols)
+        cb = ColumnBased(cols, pcols)
         cols, pcols = cols or {}, pcols or {}
         allcols = list(cols.keys()) + list(pcols.keys())
         assert list(cb._columns) == allcols   # Normal and protected are stored together
@@ -149,7 +148,14 @@ class Test_ColumnBased():
                 mkcols(['rate'],[[1, 1, 1, 1, 1]]),
                 None,
                 False
-            ),  # Different vectors
+            ),  # Different data
+            (
+                    mkcols(['rate'], [5]),
+                    None,
+                    mkcols(['rate'], [4]),
+                    None,
+                    False
+            ),  # Different length
             (
                 mkcols(['rate'], [5]),
                 None,
@@ -181,8 +187,8 @@ class Test_ColumnBased():
         ]
     )
     def test_eq(self, cols, pcols, cols2, pcols2, res):
-        cb = _ColumnBased(cols, pcols)
-        cb2 = _ColumnBased(cols2, pcols2)
+        cb = ColumnBased(cols, pcols)
+        cb2 = ColumnBased(cols2, pcols2)
         assert (cb == cb2) is res
 
     @pytest.mark.parametrize(
@@ -195,7 +201,7 @@ class Test_ColumnBased():
     )
     def test_getattr(self, cols, pcols):
         """Check whether columns accessible as dynamic attributes."""
-        cb = _ColumnBased(cols, pcols)
+        cb = ColumnBased(cols, pcols)
         for coldict in (cols, pcols):
             if coldict:
                 colname = list(coldict.keys())[0]
@@ -215,7 +221,7 @@ class Test_ColumnBased():
     )
     def test_columns_get(self, cols, pcols):
         """Check whether columns accessible as dynamic attributes."""
-        cb = _ColumnBased(cols, pcols)
+        cb = ColumnBased(cols, pcols)
         for coldict in (cols, pcols):
             if coldict:
                 colname = list(coldict.keys())[0]
@@ -235,7 +241,7 @@ class Test_ColumnBased():
     )
     def test_columns_modify(self, cols, pcols, excls):
         """Check whether columns accessible as dynamic attributes."""
-        cb = _ColumnBased(cols, pcols)
+        cb = ColumnBased(cols, pcols)
         for coldict in (cols, pcols):
             if coldict:
                 colname = list(coldict.keys())[0]
@@ -274,7 +280,7 @@ class Test_ColumnBased():
     )
     def test_columns_set(self, cols, pcols, new, excls):
         """Check whether columns accessible as dynamic attributes."""
-        cb = _ColumnBased(cols, pcols)
+        cb = ColumnBased(cols, pcols)
         for coldict in (cols, pcols):
             if coldict:
                 colname = list(coldict.keys())[0]
