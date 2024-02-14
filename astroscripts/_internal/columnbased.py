@@ -203,6 +203,11 @@ class ColumnBased(ColumnBasedMinimal):
                 raise ValueError(f"assignment ('{key}') destination is read-only")
             self.__get_column_raw(key)[:] = value   # numpy broadcasting guaranties the same shape
 
+        def __repr__(self) -> str:
+            return 'Columns([{}])'.format(', '.join(
+                f"'{col}'" for col in self.owner._columns.keys())
+            )
+
     @abstractmethod
     def __init__(self, columns: dict[str, NDArray] | None = None,
                  pcolumns: dict[str, NDArray] | None = None):
@@ -236,14 +241,14 @@ class ColumnBased(ColumnBasedMinimal):
         return col
 
     @property
-    def colnames(self):
+    def colnames(self) -> list:
         """Return names of all the columns."""
-        return self._columns.keys()
+        return list(self._columns.keys())
 
     @property
-    def pcolnames(self):
+    def pcolnames(self) -> list:
         """Return names of the protected columns."""
-        return KeysView(self._pcolnames)
+        return list(self._pcolnames)
 
     @property
     def columns(self):

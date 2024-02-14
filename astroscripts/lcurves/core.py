@@ -23,7 +23,7 @@ from .._internal.columnbased import (
     ColumnBased
 )
 
-from ._loader import _LC_read_helper
+# from ._loader import _LC_read_helper
 
 #TODO list
 # 1) make time column an object of its own class:
@@ -159,7 +159,7 @@ class TimeVector(ColumnBasedMinimal):
 
 class LCurve(ColumnBased):
 
-    def __init__(self, time: TimeVector, data: ArrayLike, *, lctype: LCType | str,
+    def __init__(self, timevec: TimeVector, data: ArrayLike, *, lctype: LCType | str,
                  tunits: TUnits | str, time_err: ArrayLike = None,
                  data_err: ArrayLike = None, binwidth: ArrayLike = None,
                  extra_columns: dict[str, ArrayLike] = None,
@@ -168,9 +168,9 @@ class LCurve(ColumnBased):
 
         self._lctype = LCType(lctype)
         self._tunits = TUnits(tunits)
-        self._timevec = time
+        self._timevec = timevec
 
-        reflen = len(time)
+        reflen = len(timevec)
         _pd = {k: _make_vector(_loc[k], vecname=k, reflen=reflen) for
                k in ('time_err', 'data', 'data_err', 'binwidth')
                if _loc[k] is not None}  # Dict for protected columns
@@ -180,6 +180,14 @@ class LCurve(ColumnBased):
                     for k in extra_columns}
 
         super().__init__(columns=None, pcolumns=_pd)
+
+    @classmethod
+    def from_columns(cls, columns: dict[str, ArrayLike], *, timezero: apyTime,
+                     lctype: LCType | str, tunits: TUnits | str) -> Self:
+        """Create light curve object from dict of columns."""
+        time = columns.pop('time')
+        timevec = TimeVector(time, units=tunits, timezero=timezero)
+        return cls(timevec, lctype=lctype, tunits=tunits, **columns)
 
     @property
     def lctype(self):
