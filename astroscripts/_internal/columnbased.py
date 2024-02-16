@@ -56,7 +56,7 @@ def _make_vector(vec: ArrayLike | None, vecname: str = None, *,
             raise TypeError(f"Integer 'reflen' is expected but {reflen} is received.")
         try:
             flt = float(vec)   # test for a number
-            res = np.ones((1, reflen)) * flt  # Create 1D array
+            res = np.ones(reflen) * flt  # Create 1D array
             return res
         except Exception:
             raise TypeError(_typertext + ' or a single number.')
