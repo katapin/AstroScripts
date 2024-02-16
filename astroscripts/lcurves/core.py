@@ -120,7 +120,7 @@ class TimeVector(ColumnBasedMinimal):
         clsname = self.__class__.__name__
         return f"{clsname}(timezero={tz}, ticks={self._ticks!r}"
 
-    def ticks_from(self, time: apyTime, units: TUnits):
+    def ticks_from(self, time: apyTime, units: TUnits) -> NDArray:
         """Return timestamps referenced to 'time' in desired time units."""
         units = TUnits(units)  # Raise an error if the string is incorrect
         if time is self._timezero:  # 'None is None' is also here
@@ -135,20 +135,20 @@ class TimeVector(ColumnBasedMinimal):
         else:  # days
             return ticks/86400
 
-    def seconds_from(self, time: apyTime):
+    def seconds_from(self, time: apyTime) -> NDArray:
         """Return timestamps in seconds referenced to 'time'."""
         return self.ticks_from(time, TUnits.sec)
 
-    def days_from(self, time: apyTime):
+    def days_from(self, time: apyTime) -> NDArray:
         """Return timestamps in days referenced to 'time'."""
         return self.ticks_from(time, TUnits.day)
 
-    def get_ticks(self, units: TUnits):
+    def get_ticks(self, units: TUnits) -> NDArray:
         """Return ticks in the desired units"""
         return self.ticks_from(self._timezero, units)
 
     @property
-    def timezero(self):
+    def timezero(self) -> apyTime:
         """Return timezero object."""
         # TODO make sure that astropy.Time objects are immutable
         return self._timezero
@@ -161,14 +161,13 @@ class TimeVector(ColumnBasedMinimal):
         self._timezero = val
         self._rebuild_hook()  # Shift ticks
 
-
     @property
-    def tickss(self):
+    def tickss(self) -> NDArray:
         """Return time stamps in seconds (copy)."""
         return self.get_ticks(TUnits.sec)
 
     @property
-    def ticksd(self):
+    def ticksd(self) -> NDArray:
         """Return time stamps in days (copy)."""
         return self.get_ticks(TUnits.day)
 
@@ -206,25 +205,30 @@ class LCurve(ColumnBased):
         return cls(timevec, lctype=lctype, tunits=tunits, **columns)
 
     @property
-    def lctype(self):
+    def lctype(self) -> LCType:
         return self._lctype
 
     @property
-    def timevec(self):
+    def timevec(self) -> TimeVector:
         """Return time vector object."""
         return self._timevec
 
-    def time_from(self, time: apyTime):
+    def time_from(self, time: apyTime) -> NDArray:
         """Return timestamps since 'time'."""
         return self._timevec.ticks_from(time, self._tunits)
 
     @property
-    def time(self):
+    def time(self) -> NDArray:
         """Return timestamps."""
         return self.time_from(self._timevec.timezero)
 
     @property
-    def tunits(self):
+    def T(self) -> float:
+        time = self.time
+        return time[-1] - time[0]
+
+    @property
+    def tunits(self) -> TUnits:
         return self._tunits
 
     @tunits.setter
